@@ -7,7 +7,7 @@
  * Get it from: Google Cloud Console → APIs & Services → Credentials
  */
 
-const CLIENT_ID     = 'YOUR_GOOGLE_CLIENT_ID_HERE';  // ← REPLACE THIS
+const CLIENT_ID     = '929932889482-8hkb7mgb203opsfa1qh9pimf4vk41g3o.apps.googleusercontent.com';  // ← REPLACE THIS
 const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
 const SCOPES        = 'https://www.googleapis.com/auth/spreadsheets';
 
