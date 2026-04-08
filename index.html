@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#FAFAF9">
+  <meta name="description" content="linea — minimalist daily notes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="linea">
+  <title>linea</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
+  <link rel="stylesheet" href="css/styles.css">
+
+  <!-- Critical inline CSS: prevents blank flash before stylesheet loads -->
+  <style>
+    body { margin: 0; background: #FAFAF9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+    #loading-screen {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: #FAFAF9; z-index: 9999; flex-direction: column; gap: 12px;
+    }
+    #loading-screen .logo { font-size: 24px; font-weight: 300; color: #1A1A1A; letter-spacing: -0.5px; }
+    #loading-screen .status { font-size: 13px; color: #6B6B6B; }
+  </style>
+</head>
+<body>
+
+  <!-- Loading screen shown until Google scripts are ready -->
+  <div id="loading-screen">
+    <div class="logo">linea</div>
+    <div class="status" id="loading-status">Loading…</div>
+  </div>
+
+  <!-- Main app shell (hidden until ready) -->
+  <div id="app" style="display:none">
+
+    <!-- ── TOP BAR ─────────────────────────────────────────── -->
+    <header id="top-bar">
+      <!-- List view header -->
+      <div id="header-list" class="header-state">
+        <span class="app-name">linea</span>
+        <div class="header-actions">
+          <div id="offline-badge" class="badge-offline" style="display:none">Offline</div>
+          <input type="search" id="search-input" placeholder="Search…" autocomplete="off" spellcheck="false">
+          <button id="btn-settings" class="icon-btn" title="Settings" aria-label="Settings">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="8" cy="8" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M8 1v2M8 13v2M1 8h2M13 8h2M2.93 2.93l1.41 1.41M11.66 11.66l1.41 1.41M2.93 13.07l1.41-1.41M11.66 4.34l1.41-1.41" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+          </button>
+          <button id="btn-new" class="btn-primary" title="New note">+&nbsp;New</button>
+        </div>
+      </div>
+
+      <!-- Editor view header -->
+      <div id="header-editor" class="header-state" style="display:none">
+        <button id="btn-back" class="btn-ghost">← Back</button>
+        <div class="header-actions">
+          <button id="btn-copy" class="btn-ghost">Copy</button>
+          <div class="overflow-menu-wrap">
+            <button id="btn-overflow" class="icon-btn" title="More options" aria-label="More options">⋯</button>
+            <div id="overflow-menu" class="dropdown" style="display:none">
+              <button class="dropdown-item" id="menu-archive">Archive note</button>
+              <button class="dropdown-item danger" id="menu-delete">Delete permanently</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── LIST VIEW ──────────────────────────────────────────── -->
+    <main id="view-list">
+      <div id="notes-list" class="notes-list"></div>
+      <div id="empty-state" class="empty-state" style="display:none">
+        <p>No notes yet.</p>
+        <p class="empty-hint">Click <strong>+ New</strong> to start.</p>
+      </div>
+      <div id="empty-search" class="empty-state" style="display:none">
+        <p>No notes match your search.</p>
+      </div>
+      <div class="archive-toggle-row">
+        <label class="archive-toggle">
+          <input type="checkbox" id="show-archived"> Show archived notes
+        </label>
+      </div>
+    </main>
+
+    <!-- ── EDITOR VIEW ────────────────────────────────────────── -->
+    <main id="view-editor" style="display:none">
+      <div class="editor-wrap">
+        <textarea
+          id="note-body"
+          class="note-textarea"
+          placeholder="Start writing…"
+          spellcheck="true"
+          autocorrect="on"
+        ></textarea>
+        <div class="editor-meta">
+          <span id="meta-created"></span>
+          <span id="meta-updated"></span>
+          <span id="save-indicator" class="save-indicator"></span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── SETTINGS MODAL ─────────────────────────────────────── -->
+    <div id="settings-overlay" class="overlay" style="display:none">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>Settings</h2>
+          <button id="btn-close-settings" class="icon-btn" aria-label="Close settings">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <section class="settings-section">
+            <h3>Google Account</h3>
+            <div id="auth-status" class="auth-status"></div>
+            <button id="btn-signin" class="btn-primary" style="display:none">Sign in with Google</button>
+            <button id="btn-signout" class="btn-ghost" style="display:none">Sign out</button>
+          </section>
+
+          <section class="settings-section">
+            <h3>Google Sheet</h3>
+            <p class="settings-hint">
+              Paste the ID from your Sheet URL:<br>
+              <code>docs.google.com/spreadsheets/d/<strong>[ID here]</strong>/edit</code>
+            </p>
+            <input type="text" id="sheet-id-input" class="text-input" placeholder="Sheet ID" spellcheck="false" autocomplete="off">
+            <button id="btn-save-sheet-id" class="btn-primary" style="margin-top:8px">Save</button>
+            <div id="sheet-status" class="sheet-status" style="margin-top:8px"></div>
+
+            <div class="copy-headers-row">
+              <span class="settings-hint">Need to set up the sheet?</span>
+              <button id="btn-copy-headers" class="btn-ghost btn-sm">Copy column headers</button>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3>Sync</h3>
+            <div id="sync-status" class="sync-status"></div>
+            <button id="btn-sync-now" class="btn-ghost">Sync now</button>
+          </section>
+
+          <section class="settings-section">
+            <h3>Data</h3>
+            <div class="button-row">
+              <button id="btn-export" class="btn-ghost">Export all as JSON</button>
+              <label class="btn-ghost" style="cursor:pointer">
+                Import from JSON
+                <input type="file" id="import-file" accept=".json" style="display:none">
+              </label>
+            </div>
+          </section>
+        </div>
+
+        <div class="modal-footer">
+          <span class="app-version">linea · v1.0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── ONBOARDING MODAL ───────────────────────────────────── -->
+    <div id="onboarding-overlay" class="overlay" style="display:none">
+      <div class="modal">
+        <div class="modal-header">
+          <h2>Welcome to linea</h2>
+        </div>
+        <div class="modal-body">
+          <p>Before you start, you'll need:</p>
+          <ol class="onboarding-steps">
+            <li>A <strong>Google Cloud project</strong> with Sheets API enabled and an OAuth Client ID configured for this origin.</li>
+            <li>A <strong>Google Sheet</strong> with a tab named <code>Notes</code> and these column headers in row 1:</li>
+          </ol>
+          <div class="header-preview">
+            <code>id &nbsp; created &nbsp; updated &nbsp; title &nbsp; body &nbsp; archived</code>
+            <button id="btn-copy-headers-onboard" class="btn-ghost btn-sm">Copy headers</button>
+          </div>
+          <p class="settings-hint" style="margin-top:16px">Then paste your Sheet ID below and sign in.</p>
+          <input type="text" id="onboard-sheet-id" class="text-input" placeholder="Sheet ID" spellcheck="false" autocomplete="off">
+          <button id="btn-onboard-continue" class="btn-primary" style="margin-top:12px; width:100%">Continue</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TOAST ─────────────────────────────────────────────── -->
+    <div id="toast" class="toast" style="display:none"></div>
+
+  </div><!-- /#app -->
+
+  <script src="js/app.js"></script>
+</body>
+</html>
