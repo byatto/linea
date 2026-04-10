@@ -7,64 +7,82 @@
  * Get it from: Google Cloud Console → APIs & Services → Credentials
  */
 
-const CLIENT_ID     = '929932889482-8hkb7mgb203opsfa1qh9pimf4vk41g3o.apps.googleusercontent.com';  // ← REPLACE THIS
+const CLIENT_ID     = '929932889482-8hkb7mgb203opsfa1qh9pimf4vk41g3o.apps.googleusercontent.com';
 const DISCOVERY_DOC = 'https://sheets.googleapis.com/$discovery/rest?version=v4';
 const SCOPES        = 'https://www.googleapis.com/auth/spreadsheets';
 
 // ─── STORAGE KEYS ────────────────────────────────────────────────────────────
-const LS_NOTES  = 'linea_notes';   // { notes: [...], lastSync: ISO }
-const LS_CONFIG = 'linea_config';  // { sheetId: string }
+const LS_NOTES  = 'linea_notes';
+const LS_CONFIG = 'linea_config';
 
 // ─── APP STATE ────────────────────────────────────────────────────────────────
 let state = {
-  notes:          [],      // all notes (archived + active)
-  rowMap:         {},      // id → sheet row number
-  currentNoteId:  null,    // note open in editor
+  notes:          [],
+  rowMap:         {},
+  currentNoteId:  null,
   isSignedIn:     false,
   sheetId:        '',
   searchQuery:    '',
   showArchived:   false,
-  saveTimer:      null,    // debounce handle for auto-save
-  tokenClient:    null,    // GIS token client
+  searchOpen:     false,
+  saveTimer:      null,
+  tokenClient:    null,
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 
-/** Generate a unique note ID */
 function makeId() {
   return `n_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
 
-/** ISO timestamp string */
 function now() { return new Date().toISOString(); }
 
-/** Format a date for display */
+/** Format a date for display — returns "Today", "Yesterday", "3 Apr", etc. */
 function formatDate(isoString) {
   if (!isoString) return '';
   const d = new Date(isoString);
-  const today    = new Date(); today.setHours(0,0,0,0);
+  const today     = new Date(); today.setHours(0,0,0,0);
   const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
-  const noteDay  = new Date(d); noteDay.setHours(0,0,0,0);
+  const noteDay   = new Date(d); noteDay.setHours(0,0,0,0);
   if (noteDay.getTime() === today.getTime())     return 'Today';
   if (noteDay.getTime() === yesterday.getTime()) return 'Yesterday';
-  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: noteDay.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+  return d.toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'short',
+    year: noteDay.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+  });
 }
 
-/** Format a time for display */
+/** Group key for date headings — same logic as formatDate */
+function dateGroupKey(isoString) {
+  return formatDate(isoString) || 'Unknown';
+}
+
 function formatTime(isoString) {
   if (!isoString) return '';
   return new Date(isoString).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
-/** Extract the title (first line, max 80 chars) from a body string */
 function titleFromBody(body) {
   const first = (body || '').split('\n')[0].trim();
   return first.length > 80 ? first.slice(0, 80) + '…' : first || 'Untitled';
 }
 
-/** Count visible lines in a body string */
+/** Extract a body preview: lines after the first, joined, max ~120 chars */
+function previewFromBody(body) {
+  if (!body) return '';
+  const lines = body.split('\n');
+  if (lines.length <= 1) return '';
+  const rest = lines.slice(1).join(' ').trim();
+  return rest.length > 120 ? rest.slice(0, 120) + '…' : rest;
+}
+
 function lineCount(body) {
   return (body || '').split('\n').filter(l => l.trim()).length;
+}
+
+function wordCount(body) {
+  if (!body || !body.trim()) return 0;
+  return body.trim().split(/\s+/).length;
 }
 
 // ─── LOCAL STORAGE ─────────────────────────────────────────────────────────
@@ -104,10 +122,6 @@ function saveConfig() {
 
 // ─── GOOGLE AUTH ─────────────────────────────────────────────────────────────
 
-/**
- * Load gapi and GIS scripts in parallel, then initialise.
- * Returns a promise that resolves when both are ready.
- */
 function loadGoogleScripts() {
   setLoadingStatus('Loading Google…');
 
@@ -136,7 +150,6 @@ function loadGoogleScripts() {
   return Promise.all([gapiReady, gisReady]);
 }
 
-/** Initialise the GIS token client (called once after scripts load) */
 function initTokenClient() {
   state.tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
@@ -155,7 +168,6 @@ function initTokenClient() {
   });
 }
 
-/** Request an access token. Uses silent flow first; prompts if needed. */
 function requestToken(interactive = false) {
   if (!state.tokenClient) return;
   state.tokenClient.requestAccessToken({ prompt: interactive ? 'select_account' : '' });
@@ -171,15 +183,13 @@ function handleSignOut() {
   renderAuthState();
 }
 
-/** Called when a Sheets API call returns 401 — try silent re-auth */
 function handleTokenExpiry() {
   state.isSignedIn = false;
-  requestToken(false); // silent; will prompt if it fails
+  requestToken(false);
 }
 
 // ─── SHEETS API ───────────────────────────────────────────────────────────────
 
-/** Read all notes from the Sheet. Returns array of note objects or null on error. */
 async function sheetReadAll() {
   if (!state.sheetId) return null;
   try {
@@ -190,7 +200,7 @@ async function sheetReadAll() {
     const rows = resp.result.values || [];
     const notes = [];
     rows.forEach((row, i) => {
-      if (!row[0]) return; // skip blank rows
+      if (!row[0]) return;
       notes.push({
         id:       row[0] || '',
         created:  row[1] || '',
@@ -199,10 +209,9 @@ async function sheetReadAll() {
         body:     row[4] || '',
         archived: (row[5] || '').toUpperCase() === 'TRUE',
         dirty:    false,
-        _row:     i + 2, // sheet row (1-indexed, row 1 is header)
+        _row:     i + 2,
       });
     });
-    // Build id→row map
     state.rowMap = {};
     notes.forEach(n => { state.rowMap[n.id] = n._row; });
     return notes;
@@ -217,7 +226,6 @@ async function sheetReadAll() {
   }
 }
 
-/** Append a new note row to the Sheet. Returns the new row number. */
 async function sheetAppend(note) {
   if (!state.sheetId) return null;
   try {
@@ -233,7 +241,6 @@ async function sheetAppend(note) {
         ]],
       },
     });
-    // Parse updated row from response
     const updatedRange = resp.result.updates?.updatedRange || '';
     const match = updatedRange.match(/(\d+)$/);
     return match ? parseInt(match[1], 10) : null;
@@ -244,12 +251,10 @@ async function sheetAppend(note) {
   }
 }
 
-/** Update an existing note row in the Sheet. */
 async function sheetUpdate(note) {
   if (!state.sheetId) return false;
   const row = state.rowMap[note.id];
   if (!row) {
-    // Don't know the row — append instead
     const newRow = await sheetAppend(note);
     if (newRow) state.rowMap[note.id] = newRow;
     return !!newRow;
@@ -275,14 +280,12 @@ async function sheetUpdate(note) {
   }
 }
 
-/** Delete a note row from the Sheet by clearing its cells. */
 async function sheetDelete(noteId) {
   if (!state.sheetId) return false;
   const row = state.rowMap[noteId];
-  if (!row) return true; // not in sheet, nothing to do
+  if (!row) return true;
 
   try {
-    // Get the spreadsheet to find the sheet ID (needed for deleteDimension)
     const meta = await gapi.client.sheets.spreadsheets.get({
       spreadsheetId: state.sheetId,
       fields: 'sheets.properties',
@@ -297,14 +300,13 @@ async function sheetDelete(noteId) {
             range: {
               sheetId: sheetGid,
               dimension: 'ROWS',
-              startIndex: row - 1,  // 0-indexed
+              startIndex: row - 1,
               endIndex: row,
             },
           },
         }],
       },
     });
-    // Row numbers after the deleted row shift down — rebuild from a fresh read on next sync
     delete state.rowMap[noteId];
     return true;
   } catch (e) {
@@ -316,12 +318,9 @@ async function sheetDelete(noteId) {
 
 // ─── SYNC ─────────────────────────────────────────────────────────────────────
 
-/** Merge sheet notes with local notes (last-write-wins on `updated`) */
 function mergeNotes(local, remote) {
   const map = {};
-  // Start with local
   local.forEach(n => { map[n.id] = { ...n }; });
-  // Overlay with remote where remote is newer
   remote.forEach(rn => {
     const ln = map[rn.id];
     if (!ln || new Date(rn.updated) >= new Date(ln.updated)) {
@@ -331,19 +330,17 @@ function mergeNotes(local, remote) {
   return Object.values(map).sort((a, b) => new Date(b.updated) - new Date(a.updated));
 }
 
-/** Full sync: read from Sheet, merge, push dirty notes */
 async function syncFromSheet() {
   if (!state.isSignedIn || !state.sheetId) return;
 
   const remote = await sheetReadAll();
-  if (!remote) return; // error already handled
+  if (!remote) return;
 
   state.notes = mergeNotes(state.notes, remote);
   saveToStorage();
   renderNotesList();
   updateSyncStatus();
 
-  // Push any dirty notes
   const dirtyNotes = state.notes.filter(n => n.dirty);
   for (const note of dirtyNotes) {
     const ok = await sheetUpdate(note);
@@ -437,14 +434,12 @@ function updateNoteBody(id, body) {
   note.updated = now();
   saveToStorage();
   scheduleSave(note);
-  // Re-sort so the edited note rises to the top
   state.notes.sort((a, b) => new Date(b.updated) - new Date(a.updated));
 }
 
 async function archiveNote(id, archived = true) {
   const note = getNoteById(id);
   if (!note) return;
-  const previous = note.archived;
   note.archived = archived;
   note.updated  = now();
   saveToStorage();
@@ -472,7 +467,7 @@ async function deleteNote(id) {
   if (state.isSignedIn && state.sheetId) await sheetDelete(id);
 }
 
-// ─── VIEWS ────────────────────────────────────────────────────────────────────
+// ─── VIEWS & TRANSITIONS ─────────────────────────────────────────────────────
 
 function showView(view) {
   const listEl   = document.getElementById('view-list');
@@ -481,17 +476,25 @@ function showView(view) {
   const hEditor  = document.getElementById('header-editor');
 
   if (view === 'list') {
-    listEl.style.display   = '';
     editorEl.style.display = 'none';
+    listEl.style.display   = '';
     hList.style.display    = '';
     hEditor.style.display  = 'none';
     state.currentNoteId    = null;
+    // Animate the list in
+    listEl.classList.remove('entering');
+    void listEl.offsetWidth; // reflow to retrigger
+    listEl.classList.add('entering');
   } else {
     listEl.style.display   = 'none';
     editorEl.style.display = '';
     hList.style.display    = 'none';
     hEditor.style.display  = '';
     window.scrollTo(0, 0);
+    // Animate the editor in
+    editorEl.classList.remove('entering');
+    void editorEl.offsetWidth;
+    editorEl.classList.add('entering');
   }
 }
 
@@ -508,6 +511,8 @@ function openEditor(id) {
   textarea.focus();
 
   renderEditorMeta(note);
+  updateWordCount(note.body);
+  showShortcutHint();
 }
 
 function autoGrow(el) {
@@ -520,6 +525,23 @@ function renderEditorMeta(note) {
   const updated = document.getElementById('meta-updated');
   if (created) created.textContent = `Created ${formatDate(note.created)}`;
   if (updated) updated.textContent = `· Last saved ${formatTime(note.updated)}`;
+}
+
+function updateWordCount(body) {
+  const el = document.getElementById('word-count');
+  if (!el) return;
+  const wc = wordCount(body);
+  el.textContent = wc === 0 ? '' : `${wc} word${wc === 1 ? '' : 's'}`;
+}
+
+/** Show the keyboard shortcut hint briefly when entering the editor */
+function showShortcutHint() {
+  const el = document.getElementById('shortcut-hint');
+  if (!el) return;
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  el.textContent = isMac ? '⌘⇧D to insert date' : 'Ctrl+Shift+D to insert date';
+  setTimeout(() => el.classList.add('visible'), 600);
+  setTimeout(() => el.classList.remove('visible'), 4000);
 }
 
 // ─── NOTE LIST RENDERING ──────────────────────────────────────────────────────
@@ -559,17 +581,32 @@ function renderNotesList() {
   emptyEl.style.display     = 'none';
   emptySearch.style.display = 'none';
 
+  // ── Group notes by date ──
+  let currentGroup = '';
+
   filtered.forEach(note => {
+    const group = dateGroupKey(note.updated);
+
+    // Insert a date heading when the group changes
+    if (group !== currentGroup) {
+      currentGroup = group;
+      const heading = document.createElement('div');
+      heading.className = 'date-group-heading';
+      heading.textContent = group;
+      listEl.appendChild(heading);
+    }
+
     const card = document.createElement('div');
     card.className = 'note-card' + (note.archived ? ' archived' : '');
     card.dataset.id = note.id;
 
-    const lc = lineCount(note.body);
-    const lineLabel = lc === 0 ? 'Empty' : lc === 1 ? '1 line' : `${lc} lines`;
+    const preview = previewFromBody(note.body);
+    const time = formatTime(note.updated);
 
     card.innerHTML = `
       <div class="note-card-title">${escapeHtml(note.title || 'Untitled')}</div>
-      <div class="note-card-meta">${formatDate(note.updated)} · ${lineLabel}${note.dirty ? ' · ●' : ''}</div>
+      ${preview ? `<div class="note-card-preview">${escapeHtml(preview)}</div>` : ''}
+      <div class="note-card-meta">${time}${note.dirty ? ' · ●' : ''}</div>
     `;
 
     card.addEventListener('click', () => openEditor(note.id));
@@ -583,6 +620,23 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+// ─── SEARCH TOGGLE ────────────────────────────────────────────────────────────
+
+function toggleSearch() {
+  const input = document.getElementById('search-input');
+  state.searchOpen = !state.searchOpen;
+
+  if (state.searchOpen) {
+    input.classList.add('expanded');
+    setTimeout(() => input.focus(), 260);
+  } else {
+    input.value = '';
+    input.classList.remove('expanded');
+    state.searchQuery = '';
+    renderNotesList();
+  }
 }
 
 // ─── AUTH STATE RENDERING ─────────────────────────────────────────────────────
@@ -689,7 +743,6 @@ function importNotes(file) {
     try {
       const imported = JSON.parse(e.target.result);
       if (!Array.isArray(imported)) throw new Error('Expected array');
-      // Merge: imported notes won't have _row info, flag as dirty so they sync
       imported.forEach(n => { n.dirty = true; });
       state.notes = mergeNotes(state.notes, imported);
       saveToStorage();
@@ -709,7 +762,6 @@ function toggleOverflowMenu() {
   const isOpen = menu.style.display !== 'none';
   menu.style.display = isOpen ? 'none' : '';
   if (!isOpen) {
-    // Close on next outside click
     setTimeout(() => {
       document.addEventListener('click', closeOverflowMenu, { once: true });
     }, 0);
@@ -728,7 +780,6 @@ async function copyToClipboard(text) {
     await navigator.clipboard.writeText(text);
     return true;
   } catch (e) {
-    // Fallback
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
@@ -738,6 +789,37 @@ async function copyToClipboard(text) {
     document.execCommand('copy');
     document.body.removeChild(ta);
     return true;
+  }
+}
+
+// ─── DATE STAMP SHORTCUT ─────────────────────────────────────────────────────
+
+/**
+ * Insert the current date/time at the cursor in the editor textarea.
+ * Triggered by Cmd+Shift+D (Mac) or Ctrl+Shift+D (Windows/Linux).
+ */
+function insertDateStamp() {
+  const textarea = document.getElementById('note-body');
+  if (!textarea || document.activeElement !== textarea) return;
+
+  const d = new Date();
+  const stamp = d.toLocaleDateString('en-GB', {
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric',
+  }) + ' ' + d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+  const start = textarea.selectionStart;
+  const end   = textarea.selectionEnd;
+  const val   = textarea.value;
+
+  textarea.value = val.slice(0, start) + stamp + val.slice(end);
+  textarea.selectionStart = textarea.selectionEnd = start + stamp.length;
+
+  autoGrow(textarea);
+  if (state.currentNoteId) {
+    updateNoteBody(state.currentNoteId, textarea.value);
+    const note = getNoteById(state.currentNoteId);
+    if (note) renderEditorMeta(note);
+    updateWordCount(textarea.value);
   }
 }
 
@@ -760,10 +842,9 @@ function wireEvents() {
   // ── New note
   document.getElementById('btn-new').addEventListener('click', createNote);
 
-  // ── Back button
+  // ── Back button (arrow icon)
   document.getElementById('btn-back').addEventListener('click', () => {
     clearTimeout(state.saveTimer);
-    // Flush any pending save immediately
     if (state.currentNoteId) {
       const note = getNoteById(state.currentNoteId);
       if (note && note.dirty) performSave(note);
@@ -772,7 +853,7 @@ function wireEvents() {
     showView('list');
   });
 
-  // ── Editor textarea
+  // ── Editor textarea input
   const textarea = document.getElementById('note-body');
   textarea.addEventListener('input', () => {
     autoGrow(textarea);
@@ -780,6 +861,7 @@ function wireEvents() {
       updateNoteBody(state.currentNoteId, textarea.value);
       const note = getNoteById(state.currentNoteId);
       if (note) renderEditorMeta(note);
+      updateWordCount(textarea.value);
     }
   });
 
@@ -809,10 +891,16 @@ function wireEvents() {
     if (confirmed) deleteNote(state.currentNoteId);
   });
 
-  // ── Search
+  // ── Search toggle (icon expands/collapses search input)
+  document.getElementById('btn-search-toggle').addEventListener('click', toggleSearch);
+
   document.getElementById('search-input').addEventListener('input', (e) => {
     state.searchQuery = e.target.value.trim();
     renderNotesList();
+  });
+
+  document.getElementById('search-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') toggleSearch();
   });
 
   // ── Archive toggle
@@ -821,11 +909,9 @@ function wireEvents() {
     renderNotesList();
   });
 
-  // ── Settings open/close
+  // ── Settings
   document.getElementById('btn-settings').addEventListener('click', openSettings);
   document.getElementById('btn-close-settings').addEventListener('click', closeSettings);
-
-  // Close settings by clicking overlay
   document.getElementById('settings-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeSettings();
   });
@@ -854,17 +940,15 @@ function wireEvents() {
     showToast('Syncing…');
   });
 
-  // ── Export
+  // ── Export / Import
   document.getElementById('btn-export').addEventListener('click', exportNotes);
-
-  // ── Import
   document.getElementById('import-file').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) importNotes(file);
-    e.target.value = ''; // reset so same file can be imported again
+    e.target.value = '';
   });
 
-  // ── Copy headers buttons
+  // ── Copy headers
   const headerStr = 'id\tcreated\tupdated\ttitle\tbody\tarchived';
   document.getElementById('btn-copy-headers').addEventListener('click', async () => {
     await copyToClipboard(headerStr);
@@ -882,8 +966,6 @@ function wireEvents() {
     document.getElementById('onboarding-overlay').style.display = 'none';
     if (state.isSignedIn) syncFromSheet();
   });
-
-  // Close onboarding overlay by clicking backdrop
   document.getElementById('onboarding-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) {
       document.getElementById('onboarding-overlay').style.display = 'none';
@@ -893,57 +975,54 @@ function wireEvents() {
   // ── Online / offline
   window.addEventListener('online',  updateOnlineStatus);
   window.addEventListener('offline', updateOnlineStatus);
+
+  // ── Global keyboard shortcuts
+  document.addEventListener('keydown', (e) => {
+    // Cmd/Ctrl+Shift+D → insert date stamp (in editor)
+    if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
+      e.preventDefault();
+      insertDateStamp();
+    }
+    // Cmd/Ctrl+K → toggle search (from list view)
+    if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !state.currentNoteId) {
+      e.preventDefault();
+      toggleSearch();
+    }
+  });
 }
 
 // ─── BOOT ─────────────────────────────────────────────────────────────────────
 
 async function boot() {
-  // 1. Load config & cached notes immediately
   loadConfig();
   loadFromStorage();
-
-  // 2. Render whatever we have from cache (instant)
   renderNotesList();
-
-  // 3. Wire up all event listeners
   wireEvents();
 
-  // 4. Load Google scripts
   try {
     setLoadingStatus('Loading authentication…');
     await loadGoogleScripts();
   } catch (e) {
     setLoadingStatus('Failed to load Google auth. Check your connection.');
     console.error('Google script load error:', e);
-    // Still show the app so cached notes are accessible
     hideLoadingScreen();
     return;
   }
 
-  // 5. Init token client
   initTokenClient();
-
-  // 6. Show the app
   hideLoadingScreen();
-
-  // 7. Show onboarding if no sheet configured
   checkOnboarding();
-
-  // 8. Update offline badge
   updateOnlineStatus();
 
-  // 9. Register service worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(e => {
       console.warn('SW registration failed:', e);
     });
   }
 
-  // 10. Attempt silent token refresh (only if CLIENT_ID has been set)
   if (CLIENT_ID && CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE') {
-    requestToken(false); // silent — triggers callback → syncFromSheet
+    requestToken(false);
   }
 }
 
-// Start
 boot();
