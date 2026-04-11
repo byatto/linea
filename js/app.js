@@ -123,8 +123,17 @@ localStorage.setItem(LS_CONFIG, JSON.stringify({ sheetId: state.sheetId }));
 
 // ─── GOOGLE AUTH ─────────────────────────────────────────────────────────────
 
-function loadGoogleScripts() {
-setLoadingStatus(‘Loading Google…’);
+// Key for persisting the access token across page refreshes within a session
+const SS_TOKEN = ‘linea_gtoken’;
+
+/**
+
+- Load gapi and GIS scripts in parallel, with a timeout.
+- If scripts fail to load (blocked, slow connection, iPad restrictions),
+- the app still shows with cached notes after the timeout.
+  */
+  function loadGoogleScripts() {
+  setLoadingStatus(‘Loading Google…’);
 
 const gapiReady = new Promise((resolve, reject) => {
 const s = document.createElement(‘script’);
@@ -148,7 +157,16 @@ s.onerror = reject;
 document.head.appendChild(s);
 });
 
-return Promise.all([gapiReady, gisReady]);
+// Race against a timeout — if scripts haven’t loaded in 8 seconds,
+// show the app anyway so the user can at least work offline
+const timeout = new Promise((_, reject) => {
+setTimeout(() => reject(new Error(‘Google scripts timed out’)), 8000);
+});
+
+return Promise.race([
+Promise.all([gapiReady, gisReady]),
+timeout,
+]);
 }
 
 function initTokenClient() {
@@ -163,11 +181,37 @@ handleSignOut();
 return;
 }
 state.isSignedIn = true;
+// Persist the token so page refreshes don’t force re-login
+try {
+sessionStorage.setItem(SS_TOKEN, JSON.stringify(tokenResponse));
+} catch (e) {}
 renderAuthState();
 syncFromSheet();
 },
 });
 }
+
+/**
+
+- On boot, try to restore a token from sessionStorage before
+- requesting a new one. This avoids the re-login-on-refresh problem.
+  */
+  function tryRestoreToken() {
+  try {
+  const saved = sessionStorage.getItem(SS_TOKEN);
+  if (!saved) return false;
+  const token = JSON.parse(saved);
+  if (!token || !token.access_token) return false;
+  // Set the token on the gapi client
+  gapi.client.setToken(token);
+  state.isSignedIn = true;
+  renderAuthState();
+  syncFromSheet();
+  return true;
+  } catch (e) {
+  return false;
+  }
+  }
 
 function requestToken(interactive = false) {
 if (!state.tokenClient) return;
@@ -181,6 +225,7 @@ const token = gapi.client.getToken();
 if (token) google.accounts.oauth2.revoke(token.access_token, () => {});
 gapi.client.setToken(null);
 state.isSignedIn = false;
+try { sessionStorage.removeItem(SS_TOKEN); } catch (e) {}
 renderAuthState();
 }
 
@@ -1017,29 +1062,46 @@ loadFromStorage();
 renderNotesList();
 wireEvents();
 
+let googleLoaded = false;
+
 try {
 setLoadingStatus(‘Loading authentication…’);
 await loadGoogleScripts();
+googleLoaded = true;
 } catch (e) {
-setLoadingStatus(‘Failed to load Google auth. Check your connection.’);
-console.error(‘Google script load error:’, e);
-hideLoadingScreen();
-return;
+console.warn(‘Google scripts unavailable:’, e.message || e);
+// Show the app anyway — cached notes still work offline
 }
 
-initTokenClient();
+// Always show the app, even if Google failed
 hideLoadingScreen();
+
+if (googleLoaded) {
+initTokenClient();
 checkOnboarding();
 updateOnlineStatus();
+
+```
+if (CLIENT_ID && CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE') {
+  // Try to restore a saved token first (avoids re-login on refresh)
+  const restored = tryRestoreToken();
+  if (!restored) {
+    // Fall back to silent token request
+    requestToken(false);
+  }
+}
+```
+
+} else {
+// No Google — show offline indicator, still allow cached note editing
+checkOnboarding();
+updateOnlineStatus();
+}
 
 if (‘serviceWorker’ in navigator) {
 navigator.serviceWorker.register(‘sw.js’).catch(e => {
 console.warn(‘SW registration failed:’, e);
 });
-}
-
-if (CLIENT_ID && CLIENT_ID !== ‘YOUR_GOOGLE_CLIENT_ID_HERE’) {
-requestToken(false);
 }
 }
 
