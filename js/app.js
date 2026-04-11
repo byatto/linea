@@ -18,6 +18,7 @@ const LS_CONFIG = 'linea_config';
 // ─── APP STATE ────────────────────────────────────────────────────────────────
 let state = {
   notes:          [],
+  deletedIds:     [],    // tombstones: IDs of permanently deleted notes
   rowMap:         {},
   currentNoteId:  null,
   isSignedIn:     false,
@@ -93,6 +94,7 @@ function loadFromStorage() {
     if (raw) {
       const parsed = JSON.parse(raw);
       state.notes = parsed.notes || [];
+      state.deletedIds = parsed.deletedIds || [];
     }
   } catch (e) { console.warn('linea: could not parse localStorage', e); }
 }
@@ -101,6 +103,7 @@ function saveToStorage() {
   try {
     localStorage.setItem(LS_NOTES, JSON.stringify({
       notes: state.notes,
+      deletedIds: state.deletedIds,
       lastSync: now(),
     }));
   } catch (e) { console.warn('linea: could not write localStorage', e); }
@@ -363,8 +366,12 @@ async function sheetDelete(noteId) {
 
 function mergeNotes(local, remote) {
   const map = {};
+  const tombstones = new Set(state.deletedIds);
+  // Start with local
   local.forEach(n => { map[n.id] = { ...n }; });
+  // Overlay with remote where remote is newer, but skip tombstoned notes
   remote.forEach(rn => {
+    if (tombstones.has(rn.id)) return; // permanently deleted, do not resurrect
     const ln = map[rn.id];
     if (!ln || new Date(rn.updated) >= new Date(ln.updated)) {
       map[rn.id] = { ...rn, dirty: false };
@@ -503,6 +510,10 @@ async function deleteNote(id) {
   if (idx === -1) return;
   state.notes.splice(idx, 1);
   delete state.rowMap[id];
+  // Record tombstone so sync never brings this note back
+  if (!state.deletedIds.includes(id)) {
+    state.deletedIds.push(id);
+  }
   saveToStorage();
   renderNotesList();
   showView('list');
