@@ -403,7 +403,7 @@ async function syncFromSheet() {
 
 function scheduleSave(note) {
   clearTimeout(state.saveTimer);
-  setSaveIndicator('saving');
+  setSaveIndicator('scribing');
   state.saveTimer = setTimeout(() => performSave(note), 2000);
 }
 
@@ -435,7 +435,10 @@ async function performSave(note) {
 function setSaveIndicator(status) {
   const el = document.getElementById('save-indicator');
   if (!el) return;
-  if (status === 'saving') {
+    if (status === 'scribing') {
+    el.textContent = 'Scribing…';
+    el.classList.add('visible');
+  } else if (status === 'saving') {
     el.textContent = 'Saving…';
     el.classList.add('visible');
   } else if (status === 'saved') {
