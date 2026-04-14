@@ -17,8 +17,8 @@
   --red:          #C04040;
   --radius:       5px;
   --max-w:        640px;
-  --font-ui:      -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
-  --font-editor:  -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  --font-ui:      Optima, Aptos, Candara, Georgia, serif;
+  --font-editor:  Optima, Aptos, Candara, Georgia, serif;
   --font-mono:    'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
   --transition:   150ms ease;
   --view-transition: 220ms ease;
@@ -201,6 +201,12 @@ a { color: inherit; }
 .icon-btn:hover { background: var(--border); color: var(--text); }
 .icon-btn svg { display: block; }
 
+#btn-new {
+  font-size: 22px;
+  font-weight: 300;
+  color: var(--text);
+}
+
 /* Back arrow — icon only, generous tap target */
 .btn-back {
   width: 40px;
@@ -350,8 +356,8 @@ a { color: inherit; }
   font-family: var(--font-editor);
   font-size: 15.5px;
   font-weight: 400;
-  line-height: 1.75;
-  letter-spacing: 0.01em;
+  line-height: 2;
+  letter-spacing: 0.02em;
   color: var(--text);
   padding: 0;
   caret-color: var(--accent);
