@@ -17,8 +17,8 @@
   --red:          #C04040;
   --radius:       5px;
   --max-w:        640px;
-  --font-ui:      Optima, Candara, Georgia, serif;
-  --font-editor:  Optima, Candara, Georgia, serif;
+  --font-ui:      Optima, Georgia, Cambria, serif;
+  --font-editor:  Optima, Georgia, Cambria, serif;
   --font-mono:    'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
   --transition:   150ms ease;
   --view-transition: 220ms ease;
