@@ -441,7 +441,7 @@ function setSaveIndicator(status) {
   } else if (status === 'saved') {
     el.textContent = 'Saved ✓';
     el.classList.add('visible');
-    setTimeout(() => el.classList.remove('visible'), 2000);
+    setTimeout(() => el.classList.remove('visible'), 5000);
   } else {
     el.textContent = 'Saved locally';
     el.classList.add('visible');
