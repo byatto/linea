@@ -37,6 +37,8 @@
     --accent-soft:  #2A2E26;
     --green:        #6BA577;
     --red:          #D46B6B;
+  }
+}
   @media (prefers-color-scheme: dark) {
   .note-card {
     border-bottom: 1px solid rgba(255,255,255,0.06);
