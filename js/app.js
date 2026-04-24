@@ -85,10 +85,6 @@ function previewFromBody(body) {
   return rest.length > 120 ? rest.slice(0, 120) + '…' : rest;
 }
 
-function lineCount(body) {
-  return (body || '').split('\n').filter(l => l.trim()).length;
-}
-
 function wordCount(body) {
   if (!body || !body.trim()) return 0;
   return body.trim().split(/\s+/).length;
@@ -143,14 +139,8 @@ function saveConfig() {
 
 // ─── GOOGLE AUTH ─────────────────────────────────────────────────────────────
 
-// Key for persisting the access token across page refreshes within a session
 const SS_TOKEN = 'linea_gtoken';
 
-/**
- * Load gapi and GIS scripts in parallel, with a timeout.
- * If scripts fail to load (blocked, slow connection, iPad restrictions),
- * the app still shows with cached notes after the timeout.
- */
 function loadGoogleScripts() {
   setLoadingStatus('Loading Google…');
 
@@ -176,8 +166,6 @@ function loadGoogleScripts() {
     document.head.appendChild(s);
   });
 
-  // Race against a timeout — if scripts haven't loaded in 8 seconds,
-  // show the app anyway so the user can at least work offline
   const timeout = new Promise((_, reject) => {
     setTimeout(() => reject(new Error('Google scripts timed out')), 8000);
   });
@@ -200,7 +188,6 @@ function initTokenClient() {
         return;
       }
       state.isSignedIn = true;
-      // Persist the token so page refreshes don't force re-login
       try {
         sessionStorage.setItem(SS_TOKEN, JSON.stringify(tokenResponse));
       } catch (e) {}
@@ -210,17 +197,12 @@ function initTokenClient() {
   });
 }
 
-/**
- * On boot, try to restore a token from sessionStorage before
- * requesting a new one. This avoids the re-login-on-refresh problem.
- */
 function tryRestoreToken() {
   try {
     const saved = sessionStorage.getItem(SS_TOKEN);
     if (!saved) return false;
     const token = JSON.parse(saved);
     if (!token || !token.access_token) return false;
-    // Set the token on the gapi client
     gapi.client.setToken(token);
     state.isSignedIn = true;
     renderAuthState();
@@ -296,7 +278,7 @@ function noteToRow(note) {
     note.id, note.created, note.updated,
     note.title, note.body,
     note.archived ? 'TRUE' : 'FALSE',
-    note.pinned ? 'TRUE' : 'FALSE',
+    note.pinned   ? 'TRUE' : 'FALSE',
   ];
 }
 
@@ -383,11 +365,9 @@ async function sheetDelete(noteId) {
 function mergeNotes(local, remote) {
   const map = {};
   const tombstones = new Set(state.deletedIds);
-  // Start with local
   local.forEach(n => { map[n.id] = { ...n }; });
-  // Overlay with remote where remote is newer, but skip tombstoned notes
   remote.forEach(rn => {
-    if (tombstones.has(rn.id)) return; // permanently deleted, do not resurrect
+    if (tombstones.has(rn.id)) return;
     const ln = map[rn.id];
     if (!ln || new Date(rn.updated) >= new Date(ln.updated)) {
       map[rn.id] = { ...rn, dirty: false };
@@ -453,9 +433,6 @@ function setSaveIndicator(status) {
   if (!el) return;
   if (status === 'scribing') {
     el.textContent = 'Scribing…';
-    el.classList.add('visible');
-  } else if (status === 'saving') {
-    el.textContent = 'Saving…';
     el.classList.add('visible');
   } else if (status === 'saved') {
     el.textContent = 'Saved ✓';
@@ -528,24 +505,18 @@ async function archiveNote(id, archived = true) {
 async function togglePinNote(id) {
   const note = getNoteById(id);
   if (!note) return;
-  note.pinned = !note.pinned;
+  note.pinned  = !note.pinned;
   note.updated = now();
   saveToStorage();
   renderNotesList();
-
-  // Update the pin menu label if still in editor
   updatePinMenuLabel(note);
-
   if (state.isSignedIn && state.sheetId) await sheetUpdate(note);
-
   showToast(note.pinned ? 'Note pinned' : 'Note unpinned');
 }
 
 function updatePinMenuLabel(note) {
   const menuPin = document.getElementById('menu-pin');
-  if (menuPin) {
-    menuPin.textContent = note.pinned ? 'Unpin note' : 'Pin note';
-  }
+  if (menuPin) menuPin.textContent = note.pinned ? 'Unpin note' : 'Pin note';
 }
 
 async function deleteNote(id) {
@@ -553,14 +524,10 @@ async function deleteNote(id) {
   if (idx === -1) return;
   state.notes.splice(idx, 1);
   delete state.rowMap[id];
-  // Record tombstone so sync never brings this note back
-  if (!state.deletedIds.includes(id)) {
-    state.deletedIds.push(id);
-  }
+  if (!state.deletedIds.includes(id)) state.deletedIds.push(id);
   saveToStorage();
   renderNotesList();
   showView('list');
-
   if (state.isSignedIn && state.sheetId) await sheetDelete(id);
 }
 
@@ -578,9 +545,8 @@ function showView(view) {
     hList.style.display    = '';
     hEditor.style.display  = 'none';
     state.currentNoteId    = null;
-    // Animate the list in
     listEl.classList.remove('entering');
-    void listEl.offsetWidth; // reflow to retrigger
+    void listEl.offsetWidth;
     listEl.classList.add('entering');
   } else {
     listEl.style.display   = 'none';
@@ -588,7 +554,6 @@ function showView(view) {
     hList.style.display    = 'none';
     hEditor.style.display  = '';
     window.scrollTo(0, 0);
-    // Animate the editor in
     editorEl.classList.remove('entering');
     void editorEl.offsetWidth;
     editorEl.classList.add('entering');
@@ -632,7 +597,6 @@ function updateWordCount(body) {
   el.textContent = wc === 0 ? '' : `${wc} word${wc === 1 ? '' : 's'}`;
 }
 
-/** Show the keyboard shortcut hint briefly when entering the editor */
 function showShortcutHint() {
   const el = document.getElementById('shortcut-hint');
   if (!el) return;
@@ -656,7 +620,6 @@ function getFilteredNotes() {
   return notes;
 }
 
-/** Build a single note card element */
 function buildNoteCard(note) {
   const card = document.createElement('div');
   card.className = 'note-card' + (note.archived ? ' archived' : '');
@@ -665,7 +628,6 @@ function buildNoteCard(note) {
   const preview = previewFromBody(note.body);
   const time = formatTime(note.updated);
 
-  // Small pin icon for pinned notes shown in non-pinned section (e.g. during search)
   const pinIndicator = note.pinned
     ? '<svg class="note-card-pin-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/></svg> '
     : '';
@@ -681,11 +643,11 @@ function buildNoteCard(note) {
 }
 
 function renderNotesList() {
-  const listEl       = document.getElementById('notes-list');
-  const emptyEl      = document.getElementById('empty-state');
-  const emptySearch  = document.getElementById('empty-search');
-  const filtered     = getFilteredNotes();
-  const allActive    = state.notes.filter(n => !n.archived);
+  const listEl      = document.getElementById('notes-list');
+  const emptyEl     = document.getElementById('empty-state');
+  const emptySearch = document.getElementById('empty-search');
+  const filtered    = getFilteredNotes();
+  const allActive   = state.notes.filter(n => !n.archived);
 
   listEl.innerHTML = '';
 
@@ -703,8 +665,8 @@ function renderNotesList() {
   emptyEl.style.display     = 'none';
   emptySearch.style.display = 'none';
 
-  // ── Pinned notes section ──
-  const pinned = filtered.filter(n => n.pinned);
+  // ── Pinned section ──
+  const pinned   = filtered.filter(n => n.pinned);
   const unpinned = filtered.filter(n => !n.pinned);
 
   if (pinned.length > 0) {
@@ -714,25 +676,21 @@ function renderNotesList() {
     const pinnedHeading = document.createElement('div');
     pinnedHeading.className = 'pinned-heading';
     pinnedHeading.innerHTML = `
-      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/></svg>
+      <svg viewBox="0 0 16 16" fill="currentColor">
+        <path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/>
+      </svg>
       Pinned
     `;
     pinnedSection.appendChild(pinnedHeading);
-
-    pinned.forEach(note => {
-      pinnedSection.appendChild(buildNoteCard(note));
-    });
-
+    pinned.forEach(note => pinnedSection.appendChild(buildNoteCard(note)));
     listEl.appendChild(pinnedSection);
   }
 
-  // ── Monthly groups for unpinned notes ──
   if (unpinned.length === 0) return;
 
-  // Determine which month is "current" (the most recent note's month)
+  // ── Monthly collapsible groups ──
   const currentMonth = monthGroupKey(unpinned[0].updated);
 
-  // Group notes by month
   const monthGroups = [];
   let lastMonth = '';
   unpinned.forEach(note => {
@@ -746,16 +704,13 @@ function renderNotesList() {
 
   monthGroups.forEach(group => {
     const isCurrentMonth = group.month === currentMonth;
-    const isCollapsed = state.collapsedMonths[group.month] === true;
-    // Current month defaults to expanded, others to collapsed (unless user toggled)
     const shouldCollapse = state.collapsedMonths[group.month] !== undefined
-      ? isCollapsed
+      ? state.collapsedMonths[group.month] === true
       : !isCurrentMonth;
 
     const monthEl = document.createElement('div');
     monthEl.className = 'month-group' + (shouldCollapse ? ' collapsed' : '');
 
-    // Month heading with chevron and count
     const heading = document.createElement('div');
     heading.className = 'month-group-heading';
     heading.innerHTML = `
@@ -772,7 +727,6 @@ function renderNotesList() {
     });
     monthEl.appendChild(heading);
 
-    // Notes container (collapsible)
     const notesContainer = document.createElement('div');
     notesContainer.className = 'month-group-notes';
 
@@ -790,9 +744,7 @@ function renderNotesList() {
       notesContainer.appendChild(buildNoteCard(note));
     });
 
-    // Set max-height for smooth collapse animation (only when expanded)
     if (!shouldCollapse) {
-      // We'll set this after DOM insertion via requestAnimationFrame
       requestAnimationFrame(() => {
         notesContainer.style.maxHeight = notesContainer.scrollHeight + 'px';
       });
@@ -834,17 +786,15 @@ function renderAuthState() {
   const statusEl   = document.getElementById('auth-status');
   const signinBtn  = document.getElementById('btn-signin');
   const signoutBtn = document.getElementById('btn-signout');
-
   if (!statusEl) return;
-
   if (state.isSignedIn) {
     statusEl.textContent = 'Signed in ✓';
-    statusEl.className = 'auth-status signed-in';
+    statusEl.className   = 'auth-status signed-in';
     signinBtn.style.display  = 'none';
     signoutBtn.style.display = '';
   } else {
     statusEl.textContent = 'Not signed in';
-    statusEl.className = 'auth-status';
+    statusEl.className   = 'auth-status';
     signinBtn.style.display  = '';
     signoutBtn.style.display = 'none';
   }
@@ -885,7 +835,7 @@ function showToast(message, undoLabel, undoCallback, duration = 5000) {
 
   if (undoLabel && undoCallback) {
     const btn = document.createElement('button');
-    btn.className = 'toast-undo';
+    btn.className   = 'toast-undo';
     btn.textContent = undoLabel;
     btn.addEventListener('click', () => {
       undoCallback();
@@ -904,6 +854,8 @@ function openSettings() {
   const el = document.getElementById('settings-overlay');
   el.style.display = '';
   document.getElementById('sheet-id-input').value = state.sheetId;
+  // Sync the archived toggle to current state
+  document.getElementById('show-archived').checked = state.showArchived;
   renderAuthState();
   updateSyncStatus();
 }
@@ -954,7 +906,7 @@ function importNotes(file) {
 // ─── OVERFLOW MENU ────────────────────────────────────────────────────────────
 
 function toggleOverflowMenu() {
-  const menu = document.getElementById('overflow-menu');
+  const menu   = document.getElementById('overflow-menu');
   const isOpen = menu.style.display !== 'none';
   menu.style.display = isOpen ? 'none' : '';
   if (!isOpen) {
@@ -979,7 +931,7 @@ async function copyToClipboard(text) {
     const ta = document.createElement('textarea');
     ta.value = text;
     ta.style.position = 'fixed';
-    ta.style.opacity = '0';
+    ta.style.opacity  = '0';
     document.body.appendChild(ta);
     ta.select();
     document.execCommand('copy');
@@ -990,10 +942,6 @@ async function copyToClipboard(text) {
 
 // ─── DATE STAMP SHORTCUT ─────────────────────────────────────────────────────
 
-/**
- * Insert the current date/time at the cursor in the editor textarea.
- * Triggered by Cmd+Shift+D (Mac) or Ctrl+Shift+D (Windows/Linux).
- */
 function insertDateStamp() {
   const textarea = document.getElementById('note-body');
   if (!textarea || document.activeElement !== textarea) return;
@@ -1038,13 +986,12 @@ function wireEvents() {
   // ── New note
   document.getElementById('btn-new').addEventListener('click', createNote);
 
-  // ── Back button (arrow icon)
+  // ── Back button
   document.getElementById('btn-back').addEventListener('click', () => {
     clearTimeout(state.saveTimer);
     if (state.currentNoteId) {
       const note = getNoteById(state.currentNoteId);
       if (note) {
-        // If the note is blank, discard it instead of saving an empty entry
         if (!note.body || !note.body.trim()) {
           const idx = state.notes.findIndex(n => n.id === note.id);
           if (idx !== -1) state.notes.splice(idx, 1);
@@ -1059,7 +1006,7 @@ function wireEvents() {
     showView('list');
   });
 
-  // ── Editor textarea input
+  // ── Editor textarea
   const textarea = document.getElementById('note-body');
   textarea.addEventListener('input', () => {
     autoGrow(textarea);
@@ -1085,7 +1032,6 @@ function wireEvents() {
     toggleOverflowMenu();
   });
 
-  // ── Pin / unpin
   document.getElementById('menu-pin').addEventListener('click', () => {
     closeOverflowMenu();
     if (state.currentNoteId) togglePinNote(state.currentNoteId);
@@ -1099,11 +1045,12 @@ function wireEvents() {
   document.getElementById('menu-delete').addEventListener('click', () => {
     closeOverflowMenu();
     if (!state.currentNoteId) return;
-    const confirmed = window.confirm('Delete this note? This cannot be undone.');
-    if (confirmed) deleteNote(state.currentNoteId);
+    if (window.confirm('Delete this note? This cannot be undone.')) {
+      deleteNote(state.currentNoteId);
+    }
   });
 
-  // ── Search toggle (icon expands/collapses search input)
+  // ── Search
   document.getElementById('btn-search-toggle').addEventListener('click', toggleSearch);
 
   document.getElementById('search-input').addEventListener('input', (e) => {
@@ -1115,7 +1062,7 @@ function wireEvents() {
     if (e.key === 'Escape') toggleSearch();
   });
 
-  // ── Archive toggle
+  // ── Show archived (now in settings modal)
   document.getElementById('show-archived').addEventListener('change', (e) => {
     state.showArchived = e.target.checked;
     renderNotesList();
@@ -1160,7 +1107,7 @@ function wireEvents() {
     e.target.value = '';
   });
 
-  // ── Copy headers (updated to include 'pinned')
+  // ── Copy headers (includes pinned column)
   const headerStr = 'id\tcreated\tupdated\ttitle\tbody\tarchived\tpinned';
   document.getElementById('btn-copy-headers').addEventListener('click', async () => {
     await copyToClipboard(headerStr);
@@ -1171,7 +1118,7 @@ function wireEvents() {
     showToast('Headers copied');
   });
 
-  // ── Onboarding continue
+  // ── Onboarding
   document.getElementById('btn-onboard-continue').addEventListener('click', () => {
     const val = document.getElementById('onboard-sheet-id').value.trim();
     if (val) { state.sheetId = val; saveConfig(); }
@@ -1188,14 +1135,12 @@ function wireEvents() {
   window.addEventListener('online',  updateOnlineStatus);
   window.addEventListener('offline', updateOnlineStatus);
 
-  // ── Global keyboard shortcuts
+  // ── Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    // Cmd/Ctrl+Shift+D → insert date stamp (in editor)
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
       e.preventDefault();
       insertDateStamp();
     }
-    // Cmd/Ctrl+K → toggle search (from list view)
     if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !state.currentNoteId) {
       e.preventDefault();
       toggleSearch();
@@ -1220,10 +1165,8 @@ async function boot() {
     googleLoaded = true;
   } catch (e) {
     console.warn('Google scripts unavailable:', e.message || e);
-    // Show the app anyway — cached notes still work offline
   }
 
-  // Always show the app, even if Google failed
   hideLoadingScreen();
 
   if (googleLoaded) {
@@ -1232,15 +1175,10 @@ async function boot() {
     updateOnlineStatus();
 
     if (CLIENT_ID && CLIENT_ID !== 'YOUR_GOOGLE_CLIENT_ID_HERE') {
-      // Try to restore a saved token first (avoids re-login on refresh)
       const restored = tryRestoreToken();
-      if (!restored) {
-        // Fall back to silent token request
-        requestToken(false);
-      }
+      if (!restored) requestToken(false);
     }
   } else {
-    // No Google — show offline indicator, still allow cached note editing
     checkOnboarding();
     updateOnlineStatus();
   }
