@@ -220,7 +220,21 @@ a { color: inherit; }
   white-space: nowrap;
 }
 .btn-ghost:hover { background: var(--border); }
-
+.btn-copy-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  opacity: 0.5;
+  transition: opacity var(--transition), background var(--transition);
+}
+.btn-copy-icon:hover {
+  opacity: 1;
+  background: var(--border);
+}
 .btn-sm { height: 26px; padding: 0 8px; font-size: 12px; }
 
 .icon-btn {
