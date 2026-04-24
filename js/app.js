@@ -635,7 +635,7 @@ function buildNoteCard(note) {
   card.innerHTML = `
     <div class="note-card-title">${escapeHtml(note.title || 'Untitled')}</div>
     ${preview ? `<div class="note-card-preview">${escapeHtml(preview)}</div>` : ''}
-    <div class="note-card-meta">${pinIndicator}${time}${note.dirty ? ' · ●' : ''}</div>
+    <div class="note-card-meta">${pinIndicator}${time} · ${wordCount(note.body)} w${note.dirty ? ' · ●' : ''}</div>
   `;
 
   card.addEventListener('click', () => openEditor(note.id));
