@@ -365,7 +365,10 @@ async function sheetDelete(noteId) {
 function mergeNotes(local, remote) {
   const map = {};
   const tombstones = new Set(state.deletedIds);
+  const remoteIds = new Set(remote.map(n => n.id));
+
   local.forEach(n => { map[n.id] = { ...n }; });
+
   remote.forEach(rn => {
     if (tombstones.has(rn.id)) return;
     const ln = map[rn.id];
@@ -373,6 +376,16 @@ function mergeNotes(local, remote) {
       map[rn.id] = { ...rn, dirty: false };
     }
   });
+
+  // Remove any local note that is absent from the sheet, unless it is
+  // a new dirty note that hasn't been written to the sheet yet.
+  // This ensures deletions made on one device propagate to all others.
+  Object.keys(map).forEach(id => {
+    if (!remoteIds.has(id) && !map[id].dirty) {
+      delete map[id];
+    }
+  });
+
   return Object.values(map).sort((a, b) => new Date(b.updated) - new Date(a.updated));
 }
 
