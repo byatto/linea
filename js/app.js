@@ -17,17 +17,18 @@ const LS_CONFIG = 'linea_config';
 
 // ─── APP STATE ────────────────────────────────────────────────────────────────
 let state = {
-  notes:          [],
-  deletedIds:     [],    // tombstones: IDs of permanently deleted notes
-  rowMap:         {},
-  currentNoteId:  null,
-  isSignedIn:     false,
-  sheetId:        '',
-  searchQuery:    '',
-  showArchived:   false,
-  searchOpen:     false,
-  saveTimer:      null,
-  tokenClient:    null,
+  notes:             [],
+  deletedIds:        [],    // tombstones: IDs of permanently deleted notes
+  collapsedMonths:   {},    // { "April 2026": true } — tracks which months are collapsed
+  rowMap:            {},
+  currentNoteId:     null,
+  isSignedIn:        false,
+  sheetId:           '',
+  searchQuery:       '',
+  showArchived:      false,
+  searchOpen:        false,
+  saveTimer:         null,
+  tokenClient:       null,
 };
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -53,7 +54,14 @@ function formatDate(isoString) {
   });
 }
 
-/** Group key for date headings — same logic as formatDate */
+/** Month-year group key, e.g. "April 2026" */
+function monthGroupKey(isoString) {
+  if (!isoString) return 'Unknown';
+  const d = new Date(isoString);
+  return d.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+}
+
+/** Date group key for sub-headings within a month */
 function dateGroupKey(isoString) {
   return formatDate(isoString) || 'Unknown';
 }
@@ -86,6 +94,14 @@ function wordCount(body) {
   return body.trim().split(/\s+/).length;
 }
 
+/** Format today's date for the header, e.g. "Wednesday, 23 April" */
+function formatHeaderDate() {
+  const d = new Date();
+  return d.toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
+}
+
 // ─── LOCAL STORAGE ─────────────────────────────────────────────────────────
 
 function loadFromStorage() {
@@ -95,6 +111,7 @@ function loadFromStorage() {
       const parsed = JSON.parse(raw);
       state.notes = parsed.notes || [];
       state.deletedIds = parsed.deletedIds || [];
+      state.collapsedMonths = parsed.collapsedMonths || {};
     }
   } catch (e) { console.warn('linea: could not parse localStorage', e); }
 }
@@ -104,6 +121,7 @@ function saveToStorage() {
     localStorage.setItem(LS_NOTES, JSON.stringify({
       notes: state.notes,
       deletedIds: state.deletedIds,
+      collapsedMonths: state.collapsedMonths,
       lastSync: now(),
     }));
   } catch (e) { console.warn('linea: could not write localStorage', e); }
@@ -241,7 +259,7 @@ async function sheetReadAll() {
   try {
     const resp = await gapi.client.sheets.spreadsheets.values.get({
       spreadsheetId: state.sheetId,
-      range: 'Notes!A2:F',
+      range: 'Notes!A2:G',
     });
     const rows = resp.result.values || [];
     const notes = [];
@@ -254,6 +272,7 @@ async function sheetReadAll() {
         title:    row[3] || '',
         body:     row[4] || '',
         archived: (row[5] || '').toUpperCase() === 'TRUE',
+        pinned:   (row[6] || '').toUpperCase() === 'TRUE',
         dirty:    false,
         _row:     i + 2,
       });
@@ -272,20 +291,23 @@ async function sheetReadAll() {
   }
 }
 
+function noteToRow(note) {
+  return [
+    note.id, note.created, note.updated,
+    note.title, note.body,
+    note.archived ? 'TRUE' : 'FALSE',
+    note.pinned ? 'TRUE' : 'FALSE',
+  ];
+}
+
 async function sheetAppend(note) {
   if (!state.sheetId) return null;
   try {
     const resp = await gapi.client.sheets.spreadsheets.values.append({
       spreadsheetId: state.sheetId,
-      range: 'Notes!A:F',
+      range: 'Notes!A:G',
       valueInputOption: 'RAW',
-      resource: {
-        values: [[
-          note.id, note.created, note.updated,
-          note.title, note.body,
-          note.archived ? 'TRUE' : 'FALSE',
-        ]],
-      },
+      resource: { values: [noteToRow(note)] },
     });
     const updatedRange = resp.result.updates?.updatedRange || '';
     const match = updatedRange.match(/(\d+)$/);
@@ -308,15 +330,9 @@ async function sheetUpdate(note) {
   try {
     await gapi.client.sheets.spreadsheets.values.update({
       spreadsheetId: state.sheetId,
-      range: `Notes!A${row}:F${row}`,
+      range: `Notes!A${row}:G${row}`,
       valueInputOption: 'RAW',
-      resource: {
-        values: [[
-          note.id, note.created, note.updated,
-          note.title, note.body,
-          note.archived ? 'TRUE' : 'FALSE',
-        ]],
-      },
+      resource: { values: [noteToRow(note)] },
     });
     return true;
   } catch (e) {
@@ -404,7 +420,7 @@ async function syncFromSheet() {
 function scheduleSave(note) {
   clearTimeout(state.saveTimer);
   setSaveIndicator('scribing');
-  state.saveTimer = setTimeout(() => performSave(note), 2000);
+  state.saveTimer = setTimeout(() => performSave(note), 5000);
 }
 
 async function performSave(note) {
@@ -435,7 +451,7 @@ async function performSave(note) {
 function setSaveIndicator(status) {
   const el = document.getElementById('save-indicator');
   if (!el) return;
-    if (status === 'scribing') {
+  if (status === 'scribing') {
     el.textContent = 'Scribing…';
     el.classList.add('visible');
   } else if (status === 'saving') {
@@ -470,6 +486,7 @@ function createNote() {
     title:    '',
     body:     '',
     archived: false,
+    pinned:   false,
     dirty:    true,
   };
   state.notes.unshift(note);
@@ -506,6 +523,29 @@ async function archiveNote(id, archived = true) {
     'Undo',
     () => archiveNote(id, !archived)
   );
+}
+
+async function togglePinNote(id) {
+  const note = getNoteById(id);
+  if (!note) return;
+  note.pinned = !note.pinned;
+  note.updated = now();
+  saveToStorage();
+  renderNotesList();
+
+  // Update the pin menu label if still in editor
+  updatePinMenuLabel(note);
+
+  if (state.isSignedIn && state.sheetId) await sheetUpdate(note);
+
+  showToast(note.pinned ? 'Note pinned' : 'Note unpinned');
+}
+
+function updatePinMenuLabel(note) {
+  const menuPin = document.getElementById('menu-pin');
+  if (menuPin) {
+    menuPin.textContent = note.pinned ? 'Unpin note' : 'Pin note';
+  }
 }
 
 async function deleteNote(id) {
@@ -569,6 +609,7 @@ function openEditor(id) {
 
   renderEditorMeta(note);
   updateWordCount(note.body);
+  updatePinMenuLabel(note);
   showShortcutHint();
 }
 
@@ -615,6 +656,30 @@ function getFilteredNotes() {
   return notes;
 }
 
+/** Build a single note card element */
+function buildNoteCard(note) {
+  const card = document.createElement('div');
+  card.className = 'note-card' + (note.archived ? ' archived' : '');
+  card.dataset.id = note.id;
+
+  const preview = previewFromBody(note.body);
+  const time = formatTime(note.updated);
+
+  // Small pin icon for pinned notes shown in non-pinned section (e.g. during search)
+  const pinIndicator = note.pinned
+    ? '<svg class="note-card-pin-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/></svg> '
+    : '';
+
+  card.innerHTML = `
+    <div class="note-card-title">${escapeHtml(note.title || 'Untitled')}</div>
+    ${preview ? `<div class="note-card-preview">${escapeHtml(preview)}</div>` : ''}
+    <div class="note-card-meta">${pinIndicator}${time}${note.dirty ? ' · ●' : ''}</div>
+  `;
+
+  card.addEventListener('click', () => openEditor(note.id));
+  return card;
+}
+
 function renderNotesList() {
   const listEl       = document.getElementById('notes-list');
   const emptyEl      = document.getElementById('empty-state');
@@ -638,36 +703,103 @@ function renderNotesList() {
   emptyEl.style.display     = 'none';
   emptySearch.style.display = 'none';
 
-  // ── Group notes by date ──
-  let currentGroup = '';
+  // ── Pinned notes section ──
+  const pinned = filtered.filter(n => n.pinned);
+  const unpinned = filtered.filter(n => !n.pinned);
 
-  filtered.forEach(note => {
-    const group = dateGroupKey(note.updated);
+  if (pinned.length > 0) {
+    const pinnedSection = document.createElement('div');
+    pinnedSection.className = 'pinned-section';
 
-    // Insert a date heading when the group changes
-    if (group !== currentGroup) {
-      currentGroup = group;
-      const heading = document.createElement('div');
-      heading.className = 'date-group-heading';
-      heading.textContent = group;
-      listEl.appendChild(heading);
+    const pinnedHeading = document.createElement('div');
+    pinnedHeading.className = 'pinned-heading';
+    pinnedHeading.innerHTML = `
+      <svg viewBox="0 0 16 16" fill="currentColor"><path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/></svg>
+      Pinned
+    `;
+    pinnedSection.appendChild(pinnedHeading);
+
+    pinned.forEach(note => {
+      pinnedSection.appendChild(buildNoteCard(note));
+    });
+
+    listEl.appendChild(pinnedSection);
+  }
+
+  // ── Monthly groups for unpinned notes ──
+  if (unpinned.length === 0) return;
+
+  // Determine which month is "current" (the most recent note's month)
+  const currentMonth = monthGroupKey(unpinned[0].updated);
+
+  // Group notes by month
+  const monthGroups = [];
+  let lastMonth = '';
+  unpinned.forEach(note => {
+    const month = monthGroupKey(note.updated);
+    if (month !== lastMonth) {
+      monthGroups.push({ month, notes: [] });
+      lastMonth = month;
+    }
+    monthGroups[monthGroups.length - 1].notes.push(note);
+  });
+
+  monthGroups.forEach(group => {
+    const isCurrentMonth = group.month === currentMonth;
+    const isCollapsed = state.collapsedMonths[group.month] === true;
+    // Current month defaults to expanded, others to collapsed (unless user toggled)
+    const shouldCollapse = state.collapsedMonths[group.month] !== undefined
+      ? isCollapsed
+      : !isCurrentMonth;
+
+    const monthEl = document.createElement('div');
+    monthEl.className = 'month-group' + (shouldCollapse ? ' collapsed' : '');
+
+    // Month heading with chevron and count
+    const heading = document.createElement('div');
+    heading.className = 'month-group-heading';
+    heading.innerHTML = `
+      <svg class="month-group-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 4l4 4-4 4"/>
+      </svg>
+      ${escapeHtml(group.month)}
+      <span class="month-group-count">${group.notes.length}</span>
+    `;
+    heading.addEventListener('click', () => {
+      const isNowCollapsed = monthEl.classList.toggle('collapsed');
+      state.collapsedMonths[group.month] = isNowCollapsed;
+      saveToStorage();
+    });
+    monthEl.appendChild(heading);
+
+    // Notes container (collapsible)
+    const notesContainer = document.createElement('div');
+    notesContainer.className = 'month-group-notes';
+
+    // Sub-group by date within the month
+    let currentDateGroup = '';
+    group.notes.forEach(note => {
+      const dateKey = dateGroupKey(note.updated);
+      if (dateKey !== currentDateGroup) {
+        currentDateGroup = dateKey;
+        const dateHeading = document.createElement('div');
+        dateHeading.className = 'date-group-heading';
+        dateHeading.textContent = dateKey;
+        notesContainer.appendChild(dateHeading);
+      }
+      notesContainer.appendChild(buildNoteCard(note));
+    });
+
+    // Set max-height for smooth collapse animation (only when expanded)
+    if (!shouldCollapse) {
+      // We'll set this after DOM insertion via requestAnimationFrame
+      requestAnimationFrame(() => {
+        notesContainer.style.maxHeight = notesContainer.scrollHeight + 'px';
+      });
     }
 
-    const card = document.createElement('div');
-    card.className = 'note-card' + (note.archived ? ' archived' : '');
-    card.dataset.id = note.id;
-
-    const preview = previewFromBody(note.body);
-    const time = formatTime(note.updated);
-
-    card.innerHTML = `
-      <div class="note-card-title">${escapeHtml(note.title || 'Untitled')}</div>
-      ${preview ? `<div class="note-card-preview">${escapeHtml(preview)}</div>` : ''}
-      <div class="note-card-meta">${time}${note.dirty ? ' · ●' : ''}</div>
-    `;
-
-    card.addEventListener('click', () => openEditor(note.id));
-    listEl.appendChild(card);
+    monthEl.appendChild(notesContainer);
+    listEl.appendChild(monthEl);
   });
 }
 
@@ -729,6 +861,13 @@ function updateSyncStatus() {
   const el = document.getElementById('sync-status');
   if (!el) return;
   el.textContent = `Last synced: ${formatTime(now())}`;
+}
+
+// ─── HEADER DATE ──────────────────────────────────────────────────────────────
+
+function renderHeaderDate() {
+  const el = document.getElementById('header-date');
+  if (el) el.textContent = formatHeaderDate();
 }
 
 // ─── TOAST ────────────────────────────────────────────────────────────────────
@@ -946,6 +1085,12 @@ function wireEvents() {
     toggleOverflowMenu();
   });
 
+  // ── Pin / unpin
+  document.getElementById('menu-pin').addEventListener('click', () => {
+    closeOverflowMenu();
+    if (state.currentNoteId) togglePinNote(state.currentNoteId);
+  });
+
   document.getElementById('menu-archive').addEventListener('click', () => {
     closeOverflowMenu();
     if (state.currentNoteId) archiveNote(state.currentNoteId, true);
@@ -1015,8 +1160,8 @@ function wireEvents() {
     e.target.value = '';
   });
 
-  // ── Copy headers
-  const headerStr = 'id\tcreated\tupdated\ttitle\tbody\tarchived';
+  // ── Copy headers (updated to include 'pinned')
+  const headerStr = 'id\tcreated\tupdated\ttitle\tbody\tarchived\tpinned';
   document.getElementById('btn-copy-headers').addEventListener('click', async () => {
     await copyToClipboard(headerStr);
     showToast('Headers copied — paste into row 1 of your Sheet');
@@ -1064,6 +1209,7 @@ async function boot() {
   loadConfig();
   loadFromStorage();
   renderNotesList();
+  renderHeaderDate();
   wireEvents();
 
   let googleLoaded = false;
