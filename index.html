@@ -15,15 +15,22 @@
   <link rel="icon" type="image/svg+xml" href="icons/favicon.svg">
   <link rel="stylesheet" href="css/styles.css">
 
-  <!-- Critical inline CSS: prevents blank flash before stylesheet loads -->
+  <!-- Critical inline CSS: prevents blank flash before stylesheet loads.
+       Colours here must exactly match the CSS token values in styles.css. -->
   <style>
     body { margin: 0; background: #F5F1E8; font-family: Optima, 'Segoe UI', Aptos, Candara, Georgia, serif; }
     @media (prefers-color-scheme: dark) { body { background: #1E1B17; } }
     #loading-screen {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
-      background: inherit; z-index: 9999; flex-direction: column; gap: 12px;
+      background: #F5F1E8; z-index: 9999; flex-direction: column; gap: 12px;
     }
-    #loading-screen .logo { font-size: 24px; font-weight: 300; font-style: italic; color: #2D2926; letter-spacing: -0.5px; }
+    @media (prefers-color-scheme: dark) {
+      #loading-screen { background: #1E1B17; }
+    }
+    #loading-screen .logo {
+      font-size: 24px; font-weight: 300; font-style: italic;
+      color: #2D2926; letter-spacing: -0.5px;
+    }
     #loading-screen .status { font-size: 13px; color: #8C857D; }
     @media (prefers-color-scheme: dark) {
       #loading-screen .logo { color: #E8E2DA; }
@@ -74,7 +81,6 @@
 
       <!-- Editor view header -->
       <div id="header-editor" class="header-state" style="display:none">
-        <!-- Back: arrow icon only, no text -->
         <button id="btn-back" class="btn-back" title="Back to notes" aria-label="Back to notes">
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M12.5 15L7.5 10L12.5 5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -106,25 +112,20 @@
         <p class="empty-state-heading">Nothing found</p>
         <p class="empty-hint">No notes match your search.</p>
       </div>
-      <div class="archive-toggle-row">
-        <label class="archive-toggle">
-          <input type="checkbox" id="show-archived"> Show archived notes
-        </label>
-      </div>
     </main>
 
     <!-- ── EDITOR VIEW ────────────────────────────────────────── -->
     <main id="view-editor" style="display:none">
       <div class="editor-wrap">
-      <textarea
-        id="note-body"
-        class="note-textarea"
-        placeholder="Start writing…"
-        spellcheck="true"
-        autocorrect="on"
-        autocapitalize="sentences"
-        lang="en"
-      ></textarea>
+        <textarea
+          id="note-body"
+          class="note-textarea"
+          placeholder="Start writing…"
+          spellcheck="true"
+          autocorrect="on"
+          autocapitalize="sentences"
+          lang="en"
+        ></textarea>
         <div class="editor-meta">
           <span id="meta-created"></span>
           <span id="meta-updated"></span>
@@ -132,7 +133,6 @@
           <span id="word-count" class="word-count"></span>
         </div>
       </div>
-      <!-- Keyboard shortcut hint (fades in after a moment in the editor) -->
       <div id="shortcut-hint" class="shortcut-hint"></div>
     </main>
 
@@ -172,6 +172,14 @@
             <h3>Sync</h3>
             <div id="sync-status" class="sync-status"></div>
             <button id="btn-sync-now" class="btn-ghost">Sync now</button>
+          </section>
+
+          <section class="settings-section">
+            <h3>Notes</h3>
+            <label class="settings-toggle">
+              <input type="checkbox" id="show-archived">
+              Show archived notes
+            </label>
           </section>
 
           <section class="settings-section">
