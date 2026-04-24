@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="theme-color" content="#FAF8F5" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#1C1A18" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#F5F1E8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#1E1B17" media="(prefers-color-scheme: dark)">
   <meta name="description" content="linea — minimalist daily notes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -17,13 +17,13 @@
 
   <!-- Critical inline CSS: prevents blank flash before stylesheet loads -->
   <style>
-    body { margin: 0; background: #FAF8F5; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
-    @media (prefers-color-scheme: dark) { body { background: #1C1A18; } }
+    body { margin: 0; background: #F5F1E8; font-family: Optima, 'Segoe UI', Aptos, Candara, Georgia, serif; }
+    @media (prefers-color-scheme: dark) { body { background: #1E1B17; } }
     #loading-screen {
       position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
       background: inherit; z-index: 9999; flex-direction: column; gap: 12px;
     }
-    #loading-screen .logo { font-size: 24px; font-weight: 300; color: #2D2926; letter-spacing: -0.5px; }
+    #loading-screen .logo { font-size: 24px; font-weight: 300; font-style: italic; color: #2D2926; letter-spacing: -0.5px; }
     #loading-screen .status { font-size: 13px; color: #8C857D; }
     @media (prefers-color-scheme: dark) {
       #loading-screen .logo { color: #E8E2DA; }
@@ -46,7 +46,10 @@
     <header id="top-bar">
       <!-- List view header -->
       <div id="header-list" class="header-state">
-        <span class="app-name">linea</span>
+        <div class="app-name-group">
+          <span class="app-name">linea</span>
+          <span class="header-date" id="header-date"></span>
+        </div>
         <div class="header-actions">
           <div id="offline-badge" class="badge-offline" style="display:none">Offline</div>
           <!-- Search: icon toggles an expanding input -->
@@ -82,6 +85,7 @@
           <div class="overflow-menu-wrap">
             <button id="btn-overflow" class="icon-btn" title="More options" aria-label="More options">⋯</button>
             <div id="overflow-menu" class="dropdown" style="display:none">
+              <button class="dropdown-item" id="menu-pin">Pin note</button>
               <button class="dropdown-item" id="menu-archive">Archive note</button>
               <button class="dropdown-item danger" id="menu-delete">Delete permanently</button>
             </div>
@@ -95,8 +99,8 @@
       <div id="notes-list" class="notes-list"></div>
       <div id="empty-state" class="empty-state" style="display:none">
         <div class="empty-state-icon">✎</div>
-        <p class="empty-state-heading">A clean page</p>
-        <p class="empty-hint">Press <strong>+</strong> to start writing.</p>
+        <p class="empty-state-heading">The page is ready when you are.</p>
+        <p class="empty-hint">Press <strong>+</strong> to begin.</p>
       </div>
       <div id="empty-search" class="empty-state" style="display:none">
         <p class="empty-state-heading">Nothing found</p>
@@ -183,7 +187,7 @@
         </div>
 
         <div class="modal-footer">
-          <span class="app-version">linea · v1.0</span>
+          <span class="app-version">linea · v1.1</span>
         </div>
       </div>
     </div>
@@ -201,7 +205,7 @@
             <li>A <strong>Google Sheet</strong> with a tab named <code>Notes</code> and these column headers in row 1:</li>
           </ol>
           <div class="header-preview">
-            <code>id &nbsp; created &nbsp; updated &nbsp; title &nbsp; body &nbsp; archived</code>
+            <code>id &nbsp; created &nbsp; updated &nbsp; title &nbsp; body &nbsp; archived &nbsp; pinned</code>
             <button id="btn-copy-headers-onboard" class="btn-ghost btn-sm">Copy headers</button>
           </div>
           <p class="settings-hint" style="margin-top:16px">Then paste your Sheet ID below and sign in.</p>
