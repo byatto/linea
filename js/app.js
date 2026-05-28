@@ -85,11 +85,6 @@ function previewFromBody(body) {
   return rest.length > 120 ? rest.slice(0, 120) + '…' : rest;
 }
 
-function wordCount(body) {
-  if (!body || !body.trim()) return 0;
-  return body.trim().split(/\s+/).length;
-}
-
 /** Format today's date for the header, e.g. "Wednesday, 23 April" */
 function formatHeaderDate() {
   const d = new Date();
@@ -142,7 +137,7 @@ function saveConfig() {
 const SS_TOKEN = 'linea_gtoken';
 
 function loadGoogleScripts() {
-  setLoadingStatus('Loading Google…');
+  setLoadingStatus('Loading authentication…');
 
   const gapiReady = new Promise((resolve, reject) => {
     const s = document.createElement('script');
@@ -412,7 +407,7 @@ async function syncFromSheet() {
 
 function scheduleSave(note) {
   clearTimeout(state.saveTimer);
-  setSaveIndicator('scribing');
+  setSyncState('pending');
   state.saveTimer = setTimeout(() => performSave(note), 5000);
 }
 
@@ -422,7 +417,7 @@ async function performSave(note) {
   if (!state.isSignedIn || !state.sheetId || !navigator.onLine) {
     note.dirty = true;
     saveToStorage();
-    setSaveIndicator('saved');
+    setSyncState('offline');
     return;
   }
 
@@ -438,24 +433,7 @@ async function performSave(note) {
 
   note.dirty = !ok;
   saveToStorage();
-  setSaveIndicator(ok ? 'saved' : 'offline');
-}
-
-function setSaveIndicator(status) {
-  const el = document.getElementById('save-indicator');
-  if (!el) return;
-  if (status === 'scribing') {
-    el.textContent = 'Scribing…';
-    el.classList.add('visible');
-  } else if (status === 'saved') {
-    el.textContent = 'Saved ✓';
-    el.classList.add('visible');
-    setTimeout(() => el.classList.remove('visible'), 5000);
-  } else {
-    el.textContent = 'Saved locally';
-    el.classList.add('visible');
-    setTimeout(() => el.classList.remove('visible'), 3000);
-  }
+  setSyncState(ok ? 'saved' : 'offline');
 }
 
 // ─── ONLINE / OFFLINE ─────────────────────────────────────────────────────────
@@ -544,6 +522,94 @@ async function deleteNote(id) {
   if (state.isSignedIn && state.sheetId) await sheetDelete(id);
 }
 
+// ─── SYNC INDICATOR (three states) ────────────────────────────────────────────
+//
+//   'pending' → outline circle (save in flight / not yet confirmed)
+//   'saved'   → filled circle + tick (confirmed in the Sheet)
+//   'offline' → cloud with a line through it (saved locally only); does not fade
+
+let syncState = 'saved';
+
+const SYNC_SVG = {
+  pending: '<circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>',
+  saved:   '<circle cx="8" cy="8" r="6.5" fill="rgba(74,124,89,0.12)" stroke="currentColor" stroke-width="1.2"/><path d="M5 8L7 10L11 6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>',
+  offline: '<path d="M4.5 11.5h7a2.5 2.5 0 0 0 .3-4.98A3.5 3.5 0 0 0 5 5.6a2.5 2.5 0 0 0-.5 5.9z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><line x1="2.5" y1="2.5" x2="13.5" y2="13.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
+};
+
+const SYNC_TITLE = {
+  pending: 'Saving…',
+  saved:   'Synced to Google Sheets',
+  offline: 'Saved locally — not synced',
+};
+
+function setSyncState(stateName) {
+  syncState = stateName;
+  const btn = document.getElementById('btn-sync');
+  if (!btn) return;
+  const svg = btn.querySelector('svg');
+  if (svg) svg.innerHTML = SYNC_SVG[stateName] || SYNC_SVG.pending;
+  btn.classList.remove('state-pending', 'state-saved', 'state-offline');
+  btn.classList.add('state-' + stateName);
+  btn.title = SYNC_TITLE[stateName] || '';
+
+  // If we just went offline, make the chrome visible so the user sees it.
+  if (stateName === 'offline') showChrome();
+}
+
+// ─── EDITOR CHROME FADE ────────────────────────────────────────────────────────
+//
+// The editor top bar (#header-editor) fades out after 2s of mouse stillness
+// while in the editor. Returns instantly on mouse movement (200ms ease CSS).
+// Stays visible on touch devices (no hover model there).
+// Stays visible while typing.
+// Never hides while syncState is 'offline'.
+
+let chromeFadeTimer = null;
+let isTouchDevice   = false;
+
+const CHROME_FADE_MS = 2000;
+
+function isEditorOpen() {
+  const ed = document.getElementById('view-editor');
+  return ed && ed.style.display !== 'none';
+}
+
+function showChrome() {
+  const bar = document.getElementById('top-bar');
+  if (bar) bar.classList.remove('chrome-hidden');
+}
+
+function hideChrome() {
+  if (isTouchDevice)              return; // never auto-hide on touch
+  if (syncState === 'offline')    return; // keep visible while offline
+  if (!isEditorOpen())            return;
+  const bar = document.getElementById('top-bar');
+  if (bar) bar.classList.add('chrome-hidden');
+}
+
+function scheduleChromeHide() {
+  clearTimeout(chromeFadeTimer);
+  chromeFadeTimer = setTimeout(hideChrome, CHROME_FADE_MS);
+}
+
+/** Call when entering the editor. */
+function startChromeFade() {
+  showChrome();
+  if (!isTouchDevice) scheduleChromeHide();
+}
+
+/** Call when leaving the editor. */
+function stopChromeFade() {
+  clearTimeout(chromeFadeTimer);
+  showChrome(); // reset to visible for next time / for the list header
+}
+
+function handleChromePointerMove() {
+  if (!isEditorOpen()) return;
+  showChrome();
+  scheduleChromeHide();
+}
+
 // ─── VIEWS & TRANSITIONS ─────────────────────────────────────────────────────
 
 function showView(view) {
@@ -553,6 +619,7 @@ function showView(view) {
   const hEditor  = document.getElementById('header-editor');
 
   if (view === 'list') {
+    stopChromeFade();
     editorEl.style.display = 'none';
     listEl.style.display   = '';
     hList.style.display    = '';
@@ -585,38 +652,20 @@ function openEditor(id) {
   autoGrow(textarea);
   textarea.focus();
 
-  renderEditorMeta(note);
-  updateWordCount(note.body);
   updatePinMenuLabel(note);
-  showShortcutHint();
+  startChromeFade();
+
+  // Set an honest initial sync state
+  if (!navigator.onLine || !state.isSignedIn) {
+    setSyncState('offline');
+  } else {
+    setSyncState(note.dirty ? 'pending' : 'saved');
+  }
 }
 
 function autoGrow(el) {
   el.style.height = 'auto';
   el.style.height = el.scrollHeight + 'px';
-}
-
-function renderEditorMeta(note) {
-  const created = document.getElementById('meta-created');
-  const updated = document.getElementById('meta-updated');
-  if (created) created.textContent = `Created ${formatDate(note.created)}`;
-  if (updated) updated.textContent = `· Last saved ${formatTime(note.updated)}`;
-}
-
-function updateWordCount(body) {
-  const el = document.getElementById('word-count');
-  if (!el) return;
-  const wc = wordCount(body);
-  el.textContent = wc === 0 ? '' : `${wc} word${wc === 1 ? '' : 's'}`;
-}
-
-function showShortcutHint() {
-  const el = document.getElementById('shortcut-hint');
-  if (!el) return;
-  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-  el.textContent = isMac ? '⌘⇧D to insert date' : 'Ctrl+Shift+D to insert date';
-  setTimeout(() => el.classList.add('visible'), 600);
-  setTimeout(() => el.classList.remove('visible'), 4000);
 }
 
 // ─── NOTE LIST RENDERING ──────────────────────────────────────────────────────
@@ -642,13 +691,13 @@ function buildNoteCard(note) {
   const time = formatTime(note.updated);
 
   const pinIndicator = note.pinned
-    ? '<svg class="note-card-pin-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/></svg> '
+    ? '<svg class="note-card-pin-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M9.828 4.172l2 2L13.5 4.5 11.5 2.5l-1.672 1.672zm-.707.707L4.5 9.5V11.5h2l4.621-4.621-2-2zM3 13h10v-1H3v1z"/></svg>'
     : '';
 
   card.innerHTML = `
     <div class="note-card-title">${escapeHtml(note.title || 'Untitled')}</div>
     ${preview ? `<div class="note-card-preview">${escapeHtml(preview)}</div>` : ''}
-    <div class="note-card-meta">${pinIndicator}${time} · ${wordCount(note.body)} w${note.dirty ? ' · ●' : ''}</div>
+    <div class="note-card-meta">${pinIndicator}${time}${note.dirty ? ' · ●' : ''}</div>
   `;
 
   card.addEventListener('click', () => openEditor(note.id));
@@ -867,7 +916,6 @@ function openSettings() {
   const el = document.getElementById('settings-overlay');
   el.style.display = '';
   document.getElementById('sheet-id-input').value = state.sheetId;
-  // Sync the archived toggle to current state
   document.getElementById('show-archived').checked = state.showArchived;
   renderAuthState();
   updateSyncStatus();
@@ -974,9 +1022,6 @@ function insertDateStamp() {
   autoGrow(textarea);
   if (state.currentNoteId) {
     updateNoteBody(state.currentNoteId, textarea.value);
-    const note = getNoteById(state.currentNoteId);
-    if (note) renderEditorMeta(note);
-    updateWordCount(textarea.value);
   }
 }
 
@@ -1025,9 +1070,6 @@ function wireEvents() {
     autoGrow(textarea);
     if (state.currentNoteId) {
       updateNoteBody(state.currentNoteId, textarea.value);
-      const note = getNoteById(state.currentNoteId);
-      if (note) renderEditorMeta(note);
-      updateWordCount(textarea.value);
     }
   });
 
@@ -1075,7 +1117,7 @@ function wireEvents() {
     if (e.key === 'Escape') toggleSearch();
   });
 
-  // ── Show archived (now in settings modal)
+  // ── Show archived (in settings modal)
   document.getElementById('show-archived').addEventListener('change', (e) => {
     state.showArchived = e.target.checked;
     renderNotesList();
@@ -1148,15 +1190,33 @@ function wireEvents() {
   window.addEventListener('online',  updateOnlineStatus);
   window.addEventListener('offline', updateOnlineStatus);
 
+  // ── Editor chrome fade
+  // Detect touch once: if the device sends a touchstart, treat as touch device
+  // (chrome stays permanently visible — no hover model on touch).
+  window.addEventListener('touchstart', () => {
+    isTouchDevice = true;
+    showChrome();
+  }, { once: true, passive: true });
+
+  // Mouse movement anywhere reveals chrome and resets the fade timer (editor only).
+  document.addEventListener('mousemove', handleChromePointerMove, { passive: true });
+
   // ── Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
+    // Ctrl/Cmd + Shift + D — insert date stamp
     if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'D') {
       e.preventDefault();
       insertDateStamp();
     }
+    // Ctrl/Cmd + K — open search (list view only)
     if ((e.metaKey || e.ctrlKey) && e.key === 'k' && !state.currentNoteId) {
       e.preventDefault();
       toggleSearch();
+    }
+    // Escape — exit editor (same behaviour as Back button)
+    if (e.key === 'Escape' && isEditorOpen()) {
+      e.preventDefault();
+      document.getElementById('btn-back').click();
     }
   });
 }
