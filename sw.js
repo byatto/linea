@@ -1,11 +1,11 @@
 /**
  * linea — sw.js (Service Worker)
  * Network-first for app pages/scripts (so updates always come through).
- * Cache-first for static assets (icons, manifest).
+ * Cache-first for static assets (icons, manifest, fonts).
  * Passthrough for Google API calls.
  */
 
-const CACHE = 'linea-v3';
+const CACHE = 'linea-v4';
 
 const ASSETS = [
   '/linea/',
@@ -16,6 +16,9 @@ const ASSETS = [
   '/linea/icons/icon-192.png',
   '/linea/icons/icon-512.png',
   '/linea/icons/favicon.svg',
+  '/linea/fonts/Inter-Regular.woff2',
+  '/linea/fonts/Inter-Medium.woff2',
+  '/linea/fonts/Inter-Italic.woff2',
 ];
 
 self.addEventListener('install', (event) => {
@@ -55,8 +58,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For HTML, CSS, JS — use network-first so updates always come through
-  // Falls back to cache if offline
+  // For HTML, CSS, JS — use network-first so updates always come through.
+  // Falls back to cache if offline.
   if (
     url.endsWith('.html') || url.endsWith('.css') || url.endsWith('.js') ||
     url.endsWith('/linea/') || url.endsWith('/linea')
@@ -75,7 +78,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // For everything else (icons, manifest) — cache-first
+  // For everything else (icons, manifest, fonts) — cache-first.
+  // Fonts are precached at install time so they're available offline.
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
