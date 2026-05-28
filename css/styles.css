@@ -1,53 +1,79 @@
 /* ═══════════════════════════════════════════════════
    linea — styles.css
-   A quality notebook feel: warm, calm, inviting.
-   Parchment & aged-paper identity.
+   Writing-first journal. Calm, near-white, warm.
+   Inter throughout (self-hosted). Parchment → paper.
    ═══════════════════════════════════════════════════ */
+
+/* ── INTER (self-hosted — see security model in CLAUDE.md) ── */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/Inter-Regular.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/Inter-Medium.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 300;
+  font-display: swap;
+  src: url('../fonts/Inter-Italic.woff2') format('woff2');
+}
 
 /* ── TOKENS ───────────────────────────────────────── */
 :root {
-  --bg:           #F5F1E8;
-  --bg-subtle:    #EDE9DF;
-  --surface:      #FDFBF6;
+  --bg:           #FEFEFD;
+  --bg-subtle:    #F7F6F2;
+  --surface:      #FFFFFF;
   --text:         #2D2926;
   --text-muted:   #8C857D;
-  --border:       #DDD8CE;
+  --border:       #E6E3DC;
   --accent:       #6B7F5E;
   --accent-hover: #5A6D4F;
   --accent-soft:  #E8ECE4;
   --green:        #4A7C59;
   --red:          #C04040;
+  --card-hover:   #FAFAF7;
   --radius:       5px;
   --max-w:        640px;
-  --font-ui:      Optima, 'Segoe UI', Aptos, Candara, Georgia, serif;
-  --font-editor:  Charter, 'Bitstream Charter', Cambria, Georgia, serif;
+  --font-ui:      'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-editor:  'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-mono:    'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
   --transition:   150ms ease;
   --view-transition: 220ms cubic-bezier(0.4, 0, 0.2, 1);
-  --card-hover:   rgba(0,0,0,0.025);
 }
 
 /* ── DARK MODE ────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg:           #1E1B17;
-    --bg-subtle:    #252219;
-    --surface:      #28241E;
-    --text:         #E8E2DA;
-    --text-muted:   #918A82;
-    --border:       #3D3830;
+    --bg:           #0E0E10;
+    --bg-subtle:    #161619;
+    --surface:      #1A1A1D;
+    --text:         #E6E4E0;
+    --text-muted:   #8E8C88;
+    --border:       #2A2A2E;
     --accent:       #8FA67E;
     --accent-hover: #A0B590;
-    --accent-soft:  #2A2E26;
+    --accent-soft:  #22241F;
     --green:        #6BA577;
     --red:          #D46B6B;
-    --card-hover:   rgba(255,255,255,0.03);
+    --card-hover:   #18181B;
   }
 }
 
+/* Dark-mode note card hairline — must sit outside/after the :root dark block */
 @media (prefers-color-scheme: dark) {
   .note-card {
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid rgba(255,255,255,0.07);
   }
 }
 
@@ -159,6 +185,17 @@ a { color: inherit; }
   gap: 8px;
 }
 
+/* ── EDITOR CHROME FADE ───────────────────────────── */
+/* JS toggles .chrome-hidden on #top-bar while in the editor view */
+#top-bar.chrome-hidden #header-editor {
+  opacity: 0;
+  pointer-events: none;
+}
+
+#header-editor {
+  transition: opacity 200ms ease;
+}
+
 /* ── SEARCH (collapsed by default, expands on click) ─ */
 .search-wrap {
   position: relative;
@@ -220,6 +257,7 @@ a { color: inherit; }
   white-space: nowrap;
 }
 .btn-ghost:hover { background: var(--border); }
+
 .btn-copy-icon {
   width: 32px;
   height: 32px;
@@ -235,6 +273,24 @@ a { color: inherit; }
   opacity: 1;
   background: var(--border);
 }
+
+/* ── SYNC INDICATOR ICON ──────────────────────────── */
+.btn-sync-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius);
+  color: var(--text-muted);
+  opacity: 0.5;
+  transition: opacity var(--transition), color var(--transition);
+}
+.btn-sync-icon.state-saved   { color: var(--green); opacity: 0.9; }
+.btn-sync-icon.state-pending { opacity: 0.5; }
+.btn-sync-icon.state-offline { color: var(--text-muted); opacity: 0.9; }
+.btn-sync-icon svg { display: block; }
+
 .btn-sm { height: 26px; padding: 0 8px; font-size: 12px; }
 
 .icon-btn {
@@ -299,12 +355,18 @@ a { color: inherit; }
 .pinned-section {
   padding-bottom: 8px;
   margin-bottom: 8px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid rgba(45,41,38,0.07);
+}
+
+@media (prefers-color-scheme: dark) {
+  .pinned-section {
+    border-bottom: 1px solid rgba(255,255,255,0.07);
+  }
 }
 
 .pinned-heading {
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--accent);
@@ -325,7 +387,7 @@ a { color: inherit; }
 
 .month-group-heading {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.4px;
   color: var(--text-muted);
   padding: 20px 0 8px;
@@ -380,11 +442,11 @@ a { color: inherit; }
 
 /* ── NOTE CARD ────────────────────────────────────── */
 .note-card {
-  padding: 16px 14px;
-  margin: 3px 0;
+  padding: 13px 14px;
+  margin: 2px 0;
   cursor: pointer;
   border-radius: var(--radius);
-  border-bottom: 1px solid rgba(0,0,0,0.06);
+  border-bottom: 1px solid rgba(45,41,38,0.07);
   transition: background var(--transition);
 }
 .note-card:hover {
@@ -489,33 +551,6 @@ a { color: inherit; }
   opacity: 0.6;
 }
 
-.editor-meta {
-  margin-top: 32px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  font-size: 12px;
-  color: var(--text-muted);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.word-count {
-  margin-left: auto;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  opacity: 0.6;
-}
-
-.save-indicator {
-  font-size: 12px;
-  color: var(--green);
-  opacity: 0;
-  transition: opacity 300ms ease;
-}
-.save-indicator.visible { opacity: 1; }
-
 /* ── OVERFLOW / DROPDOWN MENU ─────────────────────── */
 .overflow-menu-wrap { position: relative; }
 
@@ -590,7 +625,7 @@ a { color: inherit; }
   padding: 20px 24px 16px;
   border-bottom: 1px solid var(--border);
 }
-.modal-header h2 { font-size: 16px; font-weight: 600; }
+.modal-header h2 { font-size: 16px; font-weight: 500; }
 
 .modal-body { padding: 20px 24px; display: flex; flex-direction: column; gap: 0; }
 
@@ -614,7 +649,7 @@ a { color: inherit; }
 .settings-section:last-child { border-bottom: none; }
 .settings-section h3 {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.6px;
   color: var(--text-muted);
@@ -740,19 +775,6 @@ a { color: inherit; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* ── KEYBOARD SHORTCUT HINT ───────────────────────── */
-.shortcut-hint {
-  position: fixed;
-  bottom: 24px;
-  right: 24px;
-  font-size: 11px;
-  color: var(--text-muted);
-  opacity: 0;
-  transition: opacity 300ms ease;
-  pointer-events: none;
-}
-.shortcut-hint.visible { opacity: 0.5; }
-
 /* ── RESPONSIVE ───────────────────────────────────── */
 @media (max-width: 600px) {
   #top-bar { padding: 0 16px; }
@@ -760,7 +782,6 @@ a { color: inherit; }
   #view-editor { padding: 0 16px 80px; }
   .editor-wrap { padding-top: 28px; }
   #search-input.expanded { width: 150px; }
-  .shortcut-hint { display: none; }
   .app-name-group { gap: 8px; }
   .header-date { font-size: 11px; }
 }
