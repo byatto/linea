@@ -6,8 +6,8 @@
   "scope": "/linea/",
   "display": "standalone",
   "orientation": "portrait-primary",
-  "background_color": "#F5F1E8",
-  "theme_color": "#F5F1E8",
+  "background_color": "#FEFEFD",
+  "theme_color": "#FEFEFD",
   "icons": [
     {
       "src": "icons/icon-192.png",
