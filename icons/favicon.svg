@@ -1,7 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="5" fill="#FAFAF9"/>
-  <!-- I-beam cursor: vertical stroke with serifs -->
-  <line x1="11" y1="8" x2="21" y2="8" stroke="#2C2C2C" stroke-width="2" stroke-linecap="round"/>
-  <line x1="11" y1="24" x2="21" y2="24" stroke="#2C2C2C" stroke-width="2" stroke-linecap="round"/>
-  <line x1="16" y1="8" x2="16" y2="24" stroke="#2C2C2C" stroke-width="2" stroke-linecap="round"/>
+<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+  <!-- New Background Color -->
+  <rect width="512" height="512" rx="112" fill="#FEFEFD" />
+  
+  <!-- The Page Outline -->
+  <rect x="140" y="100" width="232" height="312" rx="24" fill="none" stroke="#333333" stroke-width="24" />
+  
+  <!-- The Margin / Binding Accent -->
+  <line x1="196" y1="100" x2="196" y2="412" stroke="#A0B590" stroke-width="24" />
 </svg>
