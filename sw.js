@@ -5,7 +5,7 @@
  * Passthrough for Google API calls.
  */
 
-const CACHE = 'linea-v5';
+const CACHE = 'linea-v6';
 
 const ASSETS = [
   '/linea/',
