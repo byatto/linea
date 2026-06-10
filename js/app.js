@@ -296,14 +296,48 @@ async function sheetAppend(note) {
   }
 }
 
+/**
+ * Returns true if the row recorded for this note still contains this
+ * note's ID in column A. Guards against rows shifting after another
+ * device deletes a note.
+ */
+async function verifyRow(noteId) {
+  const row = state.rowMap[noteId];
+  if (!row) return false;
+  try {
+    const resp = await gapi.client.sheets.spreadsheets.values.get({
+      spreadsheetId: state.sheetId,
+      range: `Notes!A${row}`,
+    });
+    const cell = resp.result.values?.[0]?.[0] || '';
+    return cell === noteId;
+  } catch (e) {
+    if (e.status === 401) handleTokenExpiry();
+    return false;
+  }
+}
+
 async function sheetUpdate(note) {
   if (!state.sheetId) return false;
-  const row = state.rowMap[note.id];
+
+  let row = state.rowMap[note.id];
+
+  // Guard: confirm the row still holds this note. If not, the sheet has
+  // shifted (e.g. a deletion on another device) — rebuild the map.
+  if (row) {
+    const ok = await verifyRow(note.id);
+    if (!ok) {
+      await sheetReadAll();           // rebuilds state.rowMap as a side effect
+      row = state.rowMap[note.id];
+    }
+  }
+
   if (!row) {
     const newRow = await sheetAppend(note);
     if (newRow) state.rowMap[note.id] = newRow;
     return !!newRow;
   }
+
   try {
     await gapi.client.sheets.spreadsheets.values.update({
       spreadsheetId: state.sheetId,
@@ -329,7 +363,15 @@ async function sheetDelete(noteId) {
       spreadsheetId: state.sheetId,
       fields: 'sheets.properties',
     });
-    const sheetGid = meta.result.sheets[0]?.properties?.sheetId ?? 0;
+
+    // Find the Notes tab by title, not by position — guards against tabs
+    // being added or reordered, which would cause deletion from the wrong tab.
+    const notesTab = meta.result.sheets.find(s => s.properties?.title === 'Notes');
+    if (!notesTab) {
+      console.error('sheetDelete: no tab named "Notes" found');
+      return false;
+    }
+    const sheetGid = notesTab.properties.sheetId;
 
     await gapi.client.sheets.spreadsheets.batchUpdate({
       spreadsheetId: state.sheetId,
@@ -347,6 +389,12 @@ async function sheetDelete(noteId) {
       },
     });
     delete state.rowMap[noteId];
+
+    // Every row below the deleted one has shifted up by one.
+    Object.keys(state.rowMap).forEach(id => {
+      if (state.rowMap[id] > row) state.rowMap[id] -= 1;
+    });
+
     return true;
   } catch (e) {
     if (e.status === 401) { handleTokenExpiry(); return false; }
@@ -357,7 +405,14 @@ async function sheetDelete(noteId) {
 
 // ─── SYNC ─────────────────────────────────────────────────────────────────────
 
-function mergeNotes(local, remote) {
+/**
+ * Merge local notes with remote (sheet) notes for sync.
+ * Last-write-wins by updated timestamp. Tombstoned IDs are never re-added.
+ * The deletion pass (removing local notes absent from the remote) can be
+ * suppressed via allowDeletions — set to false when the remote is empty to
+ * prevent a misconfigured Sheet ID from wiping the local cache.
+ */
+function mergeNotes(local, remote, { allowDeletions = true } = {}) {
   const map = {};
   const tombstones = new Set(state.deletedIds);
   const remoteIds = new Set(remote.map(n => n.id));
@@ -375,13 +430,56 @@ function mergeNotes(local, remote) {
   // Remove any local note that is absent from the sheet, unless it is
   // a new dirty note that hasn't been written to the sheet yet.
   // This ensures deletions made on one device propagate to all others.
-  Object.keys(map).forEach(id => {
-    if (!remoteIds.has(id) && !map[id].dirty) {
-      delete map[id];
-    }
-  });
+  // Guard: skip this pass entirely if the remote is empty — an empty
+  // sheet + populated local cache almost always means a misconfigured
+  // Sheet ID, not a genuine "everything was deleted" event.
+  if (allowDeletions) {
+    Object.keys(map).forEach(id => {
+      if (!remoteIds.has(id) && !map[id].dirty) {
+        delete map[id];
+      }
+    });
+  }
 
   return Object.values(map).sort((a, b) => new Date(b.updated) - new Date(a.updated));
+}
+
+/**
+ * Additive merge for JSON import. Adds new notes, updates existing ones
+ * if the imported copy is newer. NEVER deletes anything — that behaviour
+ * belongs only to sheet sync (mergeNotes). Imported notes are marked
+ * dirty so they get pushed to the Sheet on next sync.
+ */
+function importMerge(local, imported) {
+  const map = {};
+
+  local.forEach(n => { map[n.id] = n; });
+
+  let added = 0, updated = 0;
+
+  imported.forEach(n => {
+    if (!n || !n.id || typeof n.body !== 'string') return; // skip malformed entries
+
+    const existing = map[n.id];
+
+    if (!existing) {
+      map[n.id] = { ...n, dirty: true };
+      added++;
+    } else if (new Date(n.updated) > new Date(existing.updated)) {
+      map[n.id] = { ...n, dirty: true };
+      updated++;
+    }
+
+    // Importing a backup deliberately overrides tombstones —
+    // a restored note should come back.
+    const t = state.deletedIds.indexOf(n.id);
+    if (t !== -1) state.deletedIds.splice(t, 1);
+  });
+
+  const notes = Object.values(map)
+    .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+
+  return { notes, added, updated };
 }
 
 async function syncFromSheet() {
@@ -390,7 +488,9 @@ async function syncFromSheet() {
   const remote = await sheetReadAll();
   if (!remote) return;
 
-  state.notes = mergeNotes(state.notes, remote);
+  // Safety: never run the deletion pass against an empty remote — an empty
+  // sheet + populated local cache almost always means a misconfigured Sheet ID.
+  state.notes = mergeNotes(state.notes, remote, { allowDeletions: remote.length > 0 });
   saveToStorage();
   renderNotesList();
   updateSyncStatus();
@@ -952,11 +1052,11 @@ function importNotes(file) {
     try {
       const imported = JSON.parse(e.target.result);
       if (!Array.isArray(imported)) throw new Error('Expected array');
-      imported.forEach(n => { n.dirty = true; });
-      state.notes = mergeNotes(state.notes, imported);
+      const result = importMerge(state.notes, imported);
+      state.notes = result.notes;
       saveToStorage();
       renderNotesList();
-      showToast(`Imported ${imported.length} notes`);
+      showToast(`Imported: ${result.added} new, ${result.updated} updated`);
     } catch (err) {
       alert('Import failed: ' + err.message);
     }
