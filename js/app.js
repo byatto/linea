@@ -132,6 +132,19 @@ function saveConfig() {
   localStorage.setItem(LS_CONFIG, JSON.stringify({ sheetId: state.sheetId }));
 }
 
+// ─── DEBOUNCED STORAGE SAVE (2.5) ────────────────────────────────────────────
+// Batches localStorage writes while typing — avoids a write on every keystroke.
+// All other callers use saveToStorage() directly; only updateNoteBody uses this.
+// The visibilitychange flush (in wireEvents) ensures no typed text is lost when
+// the tab is backgrounded or closed mid-debounce.
+
+let storageTimer = null;
+
+function scheduleStorageSave() {
+  clearTimeout(storageTimer);
+  storageTimer = setTimeout(saveToStorage, 1000);
+}
+
 // ─── GOOGLE AUTH ─────────────────────────────────────────────────────────────
 
 const SS_TOKEN = 'linea_gtoken';
@@ -184,6 +197,9 @@ function initTokenClient() {
       }
       state.isSignedIn = true;
       try {
+        // 2.2 — Record expiry (with a 60s safety margin) so a stale token
+        // is never restored on the next page load, avoiding an instant 401.
+        tokenResponse._expiresAt = Date.now() + ((tokenResponse.expires_in || 3600) - 60) * 1000;
         sessionStorage.setItem(SS_TOKEN, JSON.stringify(tokenResponse));
       } catch (e) {}
       renderAuthState();
@@ -198,6 +214,12 @@ function tryRestoreToken() {
     if (!saved) return false;
     const token = JSON.parse(saved);
     if (!token || !token.access_token) return false;
+    // 2.2 — Skip restoring a token that has already expired. boot() will
+    // call requestToken(false) for a silent refresh instead.
+    if (!token._expiresAt || Date.now() > token._expiresAt) {
+      sessionStorage.removeItem(SS_TOKEN);
+      return false;
+    }
     gapi.client.setToken(token);
     state.isSignedIn = true;
     renderAuthState();
@@ -299,7 +321,7 @@ async function sheetAppend(note) {
 /**
  * Returns true if the row recorded for this note still contains this
  * note's ID in column A. Guards against rows shifting after another
- * device deletes a note.
+ * device deletes a note. (Phase 1.2)
  */
 async function verifyRow(noteId) {
   const row = state.rowMap[noteId];
@@ -390,7 +412,7 @@ async function sheetDelete(noteId) {
     });
     delete state.rowMap[noteId];
 
-    // Every row below the deleted one has shifted up by one.
+    // Every row below the deleted one has shifted up by one. (Phase 1.3)
     Object.keys(state.rowMap).forEach(id => {
       if (state.rowMap[id] > row) state.rowMap[id] -= 1;
     });
@@ -410,7 +432,7 @@ async function sheetDelete(noteId) {
  * Last-write-wins by updated timestamp. Tombstoned IDs are never re-added.
  * The deletion pass (removing local notes absent from the remote) can be
  * suppressed via allowDeletions — set to false when the remote is empty to
- * prevent a misconfigured Sheet ID from wiping the local cache.
+ * prevent a misconfigured Sheet ID from wiping the local cache. (Phase 1.4)
  */
 function mergeNotes(local, remote, { allowDeletions = true } = {}) {
   const map = {};
@@ -448,7 +470,7 @@ function mergeNotes(local, remote, { allowDeletions = true } = {}) {
  * Additive merge for JSON import. Adds new notes, updates existing ones
  * if the imported copy is newer. NEVER deletes anything — that behaviour
  * belongs only to sheet sync (mergeNotes). Imported notes are marked
- * dirty so they get pushed to the Sheet on next sync.
+ * dirty so they get pushed to the Sheet on next sync. (Phase 1.1)
  */
 function importMerge(local, imported) {
   const map = {};
@@ -495,12 +517,23 @@ async function syncFromSheet() {
   renderNotesList();
   updateSyncStatus();
 
+  // 2.1 — Push dirty notes, but discard any that are empty. An empty dirty
+  // note is an abandoned draft (e.g. opened then tab closed without typing).
+  // Discarding here prevents "Untitled" ghosts appearing in the Sheet.
   const dirtyNotes = state.notes.filter(n => n.dirty);
+  let pushed = false;
   for (const note of dirtyNotes) {
+    if (!note.body || !note.body.trim()) {
+      // Abandoned draft — remove locally, don't push to the Sheet.
+      const idx = state.notes.findIndex(n => n.id === note.id);
+      if (idx !== -1) state.notes.splice(idx, 1);
+      pushed = true;
+      continue;
+    }
     const ok = await sheetUpdate(note);
-    if (ok) note.dirty = false;
+    if (ok) { note.dirty = false; pushed = true; }
   }
-  if (dirtyNotes.length) saveToStorage();
+  if (pushed) { saveToStorage(); renderNotesList(); }
 }
 
 // ─── AUTO-SAVE ────────────────────────────────────────────────────────────────
@@ -570,7 +603,7 @@ function updateNoteBody(id, body) {
   note.body    = body;
   note.title   = titleFromBody(body);
   note.updated = now();
-  saveToStorage();
+  scheduleStorageSave(); // 2.5 — debounced; avoids a localStorage write per keystroke
   scheduleSave(note);
   state.notes.sort((a, b) => new Date(b.updated) - new Date(a.updated));
 }
@@ -615,7 +648,14 @@ async function deleteNote(id) {
   if (idx === -1) return;
   state.notes.splice(idx, 1);
   delete state.rowMap[id];
-  if (!state.deletedIds.includes(id)) state.deletedIds.push(id);
+  if (!state.deletedIds.includes(id)) {
+    state.deletedIds.push(id);
+    // 2.3 — Cap tombstone list at 1,000 entries (newest kept).
+    // Prevents unbounded growth in localStorage over a long-lived install.
+    if (state.deletedIds.length > 1000) {
+      state.deletedIds = state.deletedIds.slice(-1000);
+    }
+  }
   saveToStorage();
   renderNotesList();
   showView('list');
@@ -1300,6 +1340,23 @@ function wireEvents() {
 
   // Mouse movement anywhere reveals chrome and resets the fade timer (editor only).
   document.addEventListener('mousemove', handleChromePointerMove, { passive: true });
+
+  // 2.4 — Keyboard focus inside the top bar reveals chrome, matching mouse
+  // behaviour. Prevents tabbing onto an invisible (faded) Back button.
+  document.getElementById('top-bar').addEventListener('focusin', () => {
+    if (!isEditorOpen()) return;
+    showChrome();
+    scheduleChromeHide();
+  });
+
+  // 2.5 — Flush any pending debounced localStorage write when the tab is
+  // backgrounded or closed, so no typed text is lost mid-debounce.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      clearTimeout(storageTimer);
+      saveToStorage();
+    }
+  });
 
   // ── Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
